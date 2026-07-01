@@ -129,6 +129,9 @@ export class CfPanel {
         this.container = hostElement;
         this.onSave = onSave;
         this.overlay = el("div", "nsm-cf-panel");
+        // Catch-all: clicks inside the panel must not reach the host's
+        // click-outside-closes listener.
+        this.overlay.addEventListener("click", (e: MouseEvent) => e.stopPropagation());
         this.container.appendChild(this.overlay);
     }
 
@@ -156,10 +159,33 @@ export class CfPanel {
         this.state = clone(state);
         this.render();
         this.overlay.classList.add("nsm-cf-panel-open");
+        this.applyOverlayStyles();
     }
 
     public close(): void {
         this.overlay.classList.remove("nsm-cf-panel-open");
+        // Clear the fail-safe inline display so the class-based display:none applies.
+        this.overlay.style.display = "";
+    }
+
+    /** The panel's root element (used by the host's click-outside check). */
+    public getOverlayElement(): HTMLElement {
+        return this.overlay;
+    }
+
+    /**
+     * Fail-safe inline styles so a re-render can never drop the visible state,
+     * even if the stylesheet class is lost or not yet applied.
+     */
+    private applyOverlayStyles(): void {
+        const s = this.overlay.style;
+        s.position = "absolute";
+        s.right = "8px";
+        s.bottom = "32px";
+        s.zIndex = "1000";
+        if (this.isOpen()) {
+            s.display = "block";
+        }
     }
 
     public setAvailableMeasures(measures: { slotIndex: number; displayName: string }[]): void {
@@ -186,8 +212,12 @@ export class CfPanel {
         const header = el("div", "nsm-cf-panel-header");
         header.appendChild(el("span", undefined, "Conditional Formatting — " + this.measureName));
         const closeBtn = el("button", "nsm-cf-close", "✕");
+        closeBtn.setAttribute("type", "button");
         closeBtn.setAttribute("aria-label", "Close");
-        closeBtn.onclick = () => this.cancel();
+        closeBtn.onclick = (e: MouseEvent) => {
+            e.stopPropagation();
+            this.cancel();
+        };
         header.appendChild(closeBtn);
         this.overlay.appendChild(header);
 
@@ -252,12 +282,22 @@ export class CfPanel {
         // Footer.
         const footer = el("div", "nsm-cf-panel-footer");
         const cancelBtn = el("button", "nsm-cf-btn-secondary", "Cancel");
-        cancelBtn.onclick = () => this.cancel();
+        cancelBtn.setAttribute("type", "button");
+        cancelBtn.onclick = (e: MouseEvent) => {
+            e.stopPropagation();
+            this.cancel();
+        };
         const applyBtn = el("button", "nsm-cf-btn-primary", "Apply");
-        applyBtn.onclick = () => this.save();
+        applyBtn.setAttribute("type", "button");
+        applyBtn.onclick = (e: MouseEvent) => {
+            e.stopPropagation();
+            this.save();
+        };
         footer.appendChild(cancelBtn);
         footer.appendChild(applyBtn);
         this.overlay.appendChild(footer);
+
+        this.applyOverlayStyles();
     }
 
     private renderColorScale(): HTMLElement {
@@ -322,7 +362,11 @@ export class CfPanel {
         wrap.appendChild(list);
 
         const addBtn = el("button", "nsm-cf-add-rule", "+ Add rule");
-        addBtn.onclick = () => this.addRule();
+        addBtn.setAttribute("type", "button");
+        addBtn.onclick = (e: MouseEvent) => {
+            e.stopPropagation();
+            this.addRule();
+        };
         wrap.appendChild(addBtn);
 
         wrap.appendChild(
@@ -374,7 +418,9 @@ export class CfPanel {
 
         // AND toggle button
         const andBtn = el("button", "nsm-cf-and-btn", rule.hasAnd ? "− AND" : "+ AND");
-        andBtn.onclick = () => {
+        andBtn.setAttribute("type", "button");
+        andBtn.onclick = (e: MouseEvent) => {
+            e.stopPropagation();
             rule.hasAnd = !rule.hasAnd;
             if (!rule.hasAnd) {
                 delete rule.operator2;
@@ -429,8 +475,12 @@ export class CfPanel {
         );
 
         const removeBtn = el("button", "nsm-cf-rule-remove", "✕");
+        removeBtn.setAttribute("type", "button");
         removeBtn.setAttribute("aria-label", "Remove rule");
-        removeBtn.onclick = () => this.removeRule(index);
+        removeBtn.onclick = (e: MouseEvent) => {
+            e.stopPropagation();
+            this.removeRule(index);
+        };
         rowEl.appendChild(removeBtn);
 
         return rowEl;
@@ -519,10 +569,12 @@ export class CfPanel {
         const buttons: HTMLButtonElement[] = [];
         options.forEach((o) => {
             const btn = el("button", "nsm-cf-toggle", o.label);
+            btn.setAttribute("type", "button");
             if (o.value === current) {
                 btn.classList.add("nsm-cf-toggle-active");
             }
-            btn.onclick = () => {
+            btn.onclick = (e: MouseEvent) => {
+                e.stopPropagation();
                 buttons.forEach((b) => b.classList.remove("nsm-cf-toggle-active"));
                 btn.classList.add("nsm-cf-toggle-active");
                 onChange(o.value);

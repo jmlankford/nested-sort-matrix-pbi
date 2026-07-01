@@ -159,11 +159,15 @@ export class Visual implements IVisual {
             this.saveCfState(slotIndex, state);
         });
 
-        // Click outside the CF panel closes it.
+        // Click outside the CF panel closes it. composedPath() captures the
+        // event path at dispatch time, so the check stays correct even when a
+        // panel re-render detaches the clicked node before the event bubbles here.
         this.target.addEventListener("click", (e: MouseEvent) => {
-            if (this.cfPanel.isOpen() && !this.cfPanel.contains(e.target as Node)) {
-                this.cfPanel.close();
-            }
+            if (!this.cfPanel.isOpen()) return;
+            const path = e.composedPath();
+            const overlayEl = this.cfPanel.getOverlayElement();
+            if (overlayEl && path.includes(overlayEl)) return; // click originated inside panel
+            this.cfPanel.close();
         });
     }
 
