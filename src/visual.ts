@@ -363,7 +363,7 @@ export class Visual implements IVisual {
                 basis: cf.csBasis
             },
             rules: cf.rulesV2 ? cf.rulesV2.map((r) => ({ ...r })) : [],
-            defaultColor: cf.defaultColor || "#CCCCCC",
+            defaultColor: cf.defaultColor || "",
             fieldValue: {
                 measureSlotIndex: cf.fieldValueSlot,
                 applyAs: cf.fieldValueApplyAs
