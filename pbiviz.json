@@ -1,0 +1,25 @@
+{
+  "visual": {
+    "name": "nestedSortMatrix",
+    "displayName": "Nested Sort Matrix",
+    "guid": "nestedSortMatrix8F3A1C7B2D4E4F5A9B6C0D1E2F3A4B5C",
+    "visualClassName": "Visual",
+    "version": "1.0.1.0",
+    "description": "Replaces the stock matrix with true nested/hierarchical sorting scoped within parent groups, plus a runtime configuration panel to reorder, toggle, and temporarily rename row fields, value columns, and column pivot fields. Table DataView, client-side grouping, pivot, subtotals, conditional formatting, and row virtualization.",
+    "supportUrl": "https://learn.microsoft.com/power-bi/developer/visuals/",
+    "gitHubUrl": ""
+  },
+  "apiVersion": "5.10.0",
+  "author": {
+    "name": "Nested Sort Matrix",
+    "email": "jmlankford3@gmail.com"
+  },
+  "assets": {
+    "icon": "assets/icon.png"
+  },
+  "externalJS": [],
+  "style": "src/styles/visual.less",
+  "capabilities": "capabilities.json",
+  "dependencies": null,
+  "stringResources": []
+}

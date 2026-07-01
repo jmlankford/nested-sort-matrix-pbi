@@ -1,0 +1,25 @@
+{
+  "visual": {
+    "name": "cfTest",
+    "displayName": "CF Test",
+    "guid": "cfTest7A1B2C3D4E5F60718293A4B5C6D7E8F",
+    "visualClassName": "Visual",
+    "version": "1.0.0.0",
+    "description": "Minimal test visual to inspect the fx (conditional formatting) dialog on a single color property via getFormattingModel().",
+    "supportUrl": "https://learn.microsoft.com/power-bi/developer/visuals/",
+    "gitHubUrl": ""
+  },
+  "apiVersion": "5.10.0",
+  "author": {
+    "name": "CF Test",
+    "email": "jmlankford3@gmail.com"
+  },
+  "assets": {
+    "icon": "assets/icon.png"
+  },
+  "externalJS": [],
+  "style": "style/visual.less",
+  "capabilities": "capabilities.json",
+  "dependencies": null,
+  "stringResources": []
+}

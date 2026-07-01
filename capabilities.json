@@ -1,0 +1,410 @@
+{
+  "privileges": [],
+  "dataRoles": [
+    {
+      "name": "rowFields",
+      "displayName": "Row Fields",
+      "kind": "Grouping"
+    },
+    {
+      "name": "columnFields",
+      "displayName": "Column Fields",
+      "kind": "Grouping"
+    },
+    {
+      "name": "values",
+      "displayName": "Values",
+      "kind": "Measure"
+    }
+  ],
+
+  "dataViewMappings": [
+    {
+      "table": {
+        "rows": {
+          "select": [
+            { "for": { "in": "rowFields" } },
+            { "for": { "in": "columnFields" } },
+            { "for": { "in": "values" } }
+          ]
+        },
+        "rowCount": { "preferred": { "max": 30000 } }
+      }
+    }
+  ],
+
+  "objects": {
+    "general": {
+      "displayName": "General",
+      "properties": {
+        "configState": {
+          "displayName": "Config State",
+          "type": { "text": true }
+        },
+        "columnWidths": {
+          "displayName": "Column Widths",
+          "type": { "text": true }
+        }
+      }
+    },
+    "grid": {
+      "displayName": "Grid",
+      "properties": {
+        "rowHeightMode": {
+          "displayName": "Row height",
+          "type": {
+            "enumeration": [
+              { "value": "auto", "displayName": "Auto" },
+              { "value": "fixed", "displayName": "Fixed (px)" }
+            ]
+          }
+        },
+        "rowHeightPx": { "displayName": "Fixed row height (px)", "type": { "numeric": true } },
+        "fontSize": { "displayName": "Cell font size", "type": { "numeric": true } },
+        "valueFontFamily": {
+          "displayName": "Value cell font",
+          "type": {
+            "enumeration": [
+              { "value": "Segoe UI", "displayName": "Segoe UI" },
+              { "value": "Segoe UI Light", "displayName": "Segoe UI Light" },
+              { "value": "Segoe UI Semibold", "displayName": "Segoe UI Semibold" },
+              { "value": "Calibri", "displayName": "Calibri" },
+              { "value": "Arial", "displayName": "Arial" },
+              { "value": "Arial Black", "displayName": "Arial Black" },
+              { "value": "Georgia", "displayName": "Georgia" },
+              { "value": "Times New Roman", "displayName": "Times New Roman" },
+              { "value": "Verdana", "displayName": "Verdana" },
+              { "value": "Trebuchet MS", "displayName": "Trebuchet MS" },
+              { "value": "Courier New", "displayName": "Courier New" },
+              { "value": "Comic Sans MS", "displayName": "Comic Sans MS" },
+              { "value": "Impact", "displayName": "Impact" },
+              { "value": "Lucida Console", "displayName": "Lucida Console" }
+            ]
+          }
+        }
+      }
+    },
+    "rowHeaders": {
+      "displayName": "Row Headers",
+      "properties": {
+        "bold": { "displayName": "Bold", "type": { "bool": true } },
+        "fontSize": { "displayName": "Font size", "type": { "numeric": true } },
+        "indentPerLevel": { "displayName": "Indent per level (px)", "type": { "numeric": true } },
+        "rowFontFamily": {
+          "displayName": "Font family",
+          "type": {
+            "enumeration": [
+              { "value": "Segoe UI", "displayName": "Segoe UI" },
+              { "value": "Segoe UI Light", "displayName": "Segoe UI Light" },
+              { "value": "Segoe UI Semibold", "displayName": "Segoe UI Semibold" },
+              { "value": "Calibri", "displayName": "Calibri" },
+              { "value": "Arial", "displayName": "Arial" },
+              { "value": "Arial Black", "displayName": "Arial Black" },
+              { "value": "Georgia", "displayName": "Georgia" },
+              { "value": "Times New Roman", "displayName": "Times New Roman" },
+              { "value": "Verdana", "displayName": "Verdana" },
+              { "value": "Trebuchet MS", "displayName": "Trebuchet MS" },
+              { "value": "Courier New", "displayName": "Courier New" },
+              { "value": "Comic Sans MS", "displayName": "Comic Sans MS" },
+              { "value": "Impact", "displayName": "Impact" },
+              { "value": "Lucida Console", "displayName": "Lucida Console" }
+            ]
+          }
+        }
+      }
+    },
+    "layoutOptions": {
+      "displayName": "Layout",
+      "properties": {
+        "layoutMode": {
+          "displayName": "Layout mode",
+          "type": {
+            "enumeration": [
+              { "value": "compact", "displayName": "Compact" },
+              { "value": "outline", "displayName": "Outline" },
+              { "value": "tabular", "displayName": "Tabular" }
+            ]
+          }
+        },
+        "repeatRowHeaders": {
+          "displayName": "Repeat row headers",
+          "type": { "bool": true }
+        }
+      }
+    },
+    "columnHeaders": {
+      "displayName": "Column Headers",
+      "properties": {
+        "bold": { "displayName": "Bold", "type": { "bool": true } },
+        "fontSize": { "displayName": "Font size", "type": { "numeric": true } },
+        "showSortArrows": { "displayName": "Show sort arrows", "type": { "bool": true } },
+        "columnFontFamily": {
+          "displayName": "Font family",
+          "type": {
+            "enumeration": [
+              { "value": "Segoe UI", "displayName": "Segoe UI" },
+              { "value": "Segoe UI Light", "displayName": "Segoe UI Light" },
+              { "value": "Segoe UI Semibold", "displayName": "Segoe UI Semibold" },
+              { "value": "Calibri", "displayName": "Calibri" },
+              { "value": "Arial", "displayName": "Arial" },
+              { "value": "Arial Black", "displayName": "Arial Black" },
+              { "value": "Georgia", "displayName": "Georgia" },
+              { "value": "Times New Roman", "displayName": "Times New Roman" },
+              { "value": "Verdana", "displayName": "Verdana" },
+              { "value": "Trebuchet MS", "displayName": "Trebuchet MS" },
+              { "value": "Courier New", "displayName": "Courier New" },
+              { "value": "Comic Sans MS", "displayName": "Comic Sans MS" },
+              { "value": "Impact", "displayName": "Impact" },
+              { "value": "Lucida Console", "displayName": "Lucida Console" }
+            ]
+          }
+        }
+      }
+    },
+    "expandCollapse": {
+      "displayName": "Expand/Collapse Buttons",
+      "properties": {
+        "show": { "displayName": "Show expand/collapse buttons", "type": { "bool": true } },
+        "buttonSize": { "displayName": "Button size (px)", "type": { "numeric": true } },
+        "buttonColor": { "displayName": "Button color", "type": { "fill": { "solid": { "color": true } } } },
+        "style": {
+          "displayName": "Button style",
+          "type": {
+            "enumeration": [
+              { "value": "plusMinus", "displayName": "＋ / −" },
+              { "value": "chevron", "displayName": "› / ⌄" },
+              { "value": "triangle", "displayName": "▶ / ▼" }
+            ]
+          }
+        }
+      }
+    },
+    "subtotals": {
+      "displayName": "Subtotals & Totals",
+      "properties": {
+        "rowSubtotals": { "displayName": "Row subtotals", "type": { "bool": true } },
+        "levelEnabled": { "displayName": "Show subtotal", "type": { "bool": true } },
+        "level1": { "displayName": "Level 1 subtotal", "type": { "bool": true } },
+        "level2": { "displayName": "Level 2 subtotal", "type": { "bool": true } },
+        "level3": { "displayName": "Level 3 subtotal", "type": { "bool": true } },
+        "level4": { "displayName": "Level 4 subtotal", "type": { "bool": true } },
+        "level5": { "displayName": "Level 5 subtotal", "type": { "bool": true } },
+        "level6": { "displayName": "Level 6 subtotal", "type": { "bool": true } },
+        "level7": { "displayName": "Level 7 subtotal", "type": { "bool": true } },
+        "level8": { "displayName": "Level 8 subtotal", "type": { "bool": true } },
+        "level9": { "displayName": "Level 9 subtotal", "type": { "bool": true } },
+        "level10": { "displayName": "Level 10 subtotal", "type": { "bool": true } },
+        "columnSubtotals": { "displayName": "Column subtotals", "type": { "bool": true } },
+        "grandTotalRow": { "displayName": "Grand total row", "type": { "bool": true } },
+        "grandTotalColumn": { "displayName": "Grand total column", "type": { "bool": true } },
+        "labelText": { "displayName": "Subtotal label", "type": { "text": true } },
+        "applyCfToTotals": { "displayName": "Apply CF to totals", "type": { "bool": true } }
+      }
+    },
+    "valueFormatting": {
+      "displayName": "Values",
+      "properties": {
+        "fontFamily": {
+          "displayName": "Font",
+          "type": {
+            "enumeration": [
+              { "value": "Segoe UI", "displayName": "Segoe UI" },
+              { "value": "Segoe UI Light", "displayName": "Segoe UI Light" },
+              { "value": "Segoe UI Semibold", "displayName": "Segoe UI Semibold" },
+              { "value": "Calibri", "displayName": "Calibri" },
+              { "value": "Arial", "displayName": "Arial" },
+              { "value": "Arial Black", "displayName": "Arial Black" },
+              { "value": "Georgia", "displayName": "Georgia" },
+              { "value": "Times New Roman", "displayName": "Times New Roman" },
+              { "value": "Verdana", "displayName": "Verdana" },
+              { "value": "Trebuchet MS", "displayName": "Trebuchet MS" },
+              { "value": "Courier New", "displayName": "Courier New" },
+              { "value": "Comic Sans MS", "displayName": "Comic Sans MS" },
+              { "value": "Impact", "displayName": "Impact" },
+              { "value": "Lucida Console", "displayName": "Lucida Console" }
+            ]
+          }
+        },
+        "fontSize": { "displayName": "Font size", "type": { "numeric": true } },
+        "bold": { "displayName": "Bold", "type": { "bool": true } },
+        "italic": { "displayName": "Italic", "type": { "bool": true } },
+        "textColor": { "displayName": "Font color", "type": { "fill": { "solid": { "color": true } } } },
+        "backgroundColor": { "displayName": "Background color", "type": { "fill": { "solid": { "color": true } } } },
+        "altTextColor": { "displayName": "Alternate font color", "type": { "fill": { "solid": { "color": true } } } },
+        "altBackgroundColor": { "displayName": "Alternate background color", "type": { "fill": { "solid": { "color": true } } } },
+        "textWrap": { "displayName": "Text wrap", "type": { "bool": true } },
+        "numberFormat": { "displayName": "Format (Power BI format string, e.g. #,##0.00)", "type": { "text": true } },
+        "decimals": { "displayName": "Decimal places", "type": { "numeric": true } },
+        "unit": {
+          "displayName": "Display unit",
+          "type": {
+            "enumeration": [
+              { "value": "none", "displayName": "None" },
+              { "value": "thousands", "displayName": "Thousands" },
+              { "value": "millions", "displayName": "Millions" },
+              { "value": "billions", "displayName": "Billions" }
+            ]
+          }
+        },
+        "prefix": { "displayName": "Prefix", "type": { "text": true } },
+        "suffix": { "displayName": "Suffix", "type": { "text": true } }
+      }
+    },
+    "specificColumn": {
+      "displayName": "Specific Column",
+      "properties": {
+        "applyTo": {
+          "displayName": "Apply to",
+          "type": {
+            "enumeration": [
+              { "value": "all", "displayName": "All" },
+              { "value": "values", "displayName": "Values" },
+              { "value": "header", "displayName": "Header" },
+              { "value": "subtotals", "displayName": "Subtotals" },
+              { "value": "grandTotal", "displayName": "Grand total" }
+            ]
+          }
+        },
+        "textColor": { "displayName": "Font color", "type": { "fill": { "solid": { "color": true } } } },
+        "backgroundColor": { "displayName": "Background color", "type": { "fill": { "solid": { "color": true } } } },
+        "alignment": {
+          "displayName": "Alignment",
+          "type": {
+            "enumeration": [
+              { "value": "auto", "displayName": "Auto" },
+              { "value": "left", "displayName": "Left" },
+              { "value": "center", "displayName": "Center" },
+              { "value": "right", "displayName": "Right" }
+            ]
+          }
+        },
+        "unit": {
+          "displayName": "Display unit",
+          "type": {
+            "enumeration": [
+              { "value": "none", "displayName": "None" },
+              { "value": "thousands", "displayName": "Thousands" },
+              { "value": "millions", "displayName": "Millions" },
+              { "value": "billions", "displayName": "Billions" }
+            ]
+          }
+        },
+        "decimals": { "displayName": "Decimal places", "type": { "numeric": true } }
+      }
+    },
+    "cfSettings": {
+      "displayName": "Conditional Formatting",
+      "properties": {
+        "cfType": {
+          "displayName": "Type",
+          "type": {
+            "enumeration": [
+              { "value": "none", "displayName": "None" },
+              { "value": "colorScale", "displayName": "Color Scale" },
+              { "value": "rules", "displayName": "Rules" },
+              { "value": "dataBars", "displayName": "Data Bars" },
+              { "value": "icons", "displayName": "Icon Sets" }
+            ]
+          }
+        },
+        "applyToTotals": { "displayName": "Apply to totals", "type": { "bool": true } },
+        "csLowColor": { "displayName": "Color scale: low", "type": { "fill": { "solid": { "color": true } } } },
+        "csUseMid": { "displayName": "Color scale: use midpoint", "type": { "bool": true } },
+        "csMidColor": { "displayName": "Color scale: mid", "type": { "fill": { "solid": { "color": true } } } },
+        "csHighColor": { "displayName": "Color scale: high", "type": { "fill": { "solid": { "color": true } } } },
+        "csBasis": {
+          "displayName": "Color scale basis",
+          "type": {
+            "enumeration": [
+              { "value": "value", "displayName": "Field value" },
+              { "value": "percent", "displayName": "Percent of range" }
+            ]
+          }
+        },
+        "rulesJson": { "displayName": "Rules (JSON)", "type": { "text": true } },
+        "barPositiveColor": { "displayName": "Data bar: positive", "type": { "fill": { "solid": { "color": true } } } },
+        "barNegativeColor": { "displayName": "Data bar: negative", "type": { "fill": { "solid": { "color": true } } } },
+        "barAxis": {
+          "displayName": "Data bar: axis",
+          "type": {
+            "enumeration": [
+              { "value": "auto", "displayName": "Auto" },
+              { "value": "left", "displayName": "Left" },
+              { "value": "middle", "displayName": "Middle" }
+            ]
+          }
+        },
+        "barMinMode": {
+          "displayName": "Data bar: min basis",
+          "type": {
+            "enumeration": [
+              { "value": "auto", "displayName": "Auto" },
+              { "value": "fixed", "displayName": "Fixed" }
+            ]
+          }
+        },
+        "barMin": { "displayName": "Data bar: min value", "type": { "numeric": true } },
+        "barMaxMode": {
+          "displayName": "Data bar: max basis",
+          "type": {
+            "enumeration": [
+              { "value": "auto", "displayName": "Auto" },
+              { "value": "fixed", "displayName": "Fixed" }
+            ]
+          }
+        },
+        "barMax": { "displayName": "Data bar: max value", "type": { "numeric": true } },
+        "iconsJson": { "displayName": "Icon tiers (JSON)", "type": { "text": true } },
+        "fieldValueSlot": {
+          "displayName": "Field value measure slot",
+          "type": { "numeric": true }
+        },
+        "fieldValueApplyAs": {
+          "displayName": "Field value apply as",
+          "type": { "text": true }
+        },
+        "defaultColor": {
+          "displayName": "Default color",
+          "type": { "text": true }
+        },
+        "cfApplyTo": {
+          "displayName": "Apply to",
+          "type": { "text": true }
+        },
+        "rulesV2": {
+          "displayName": "Rules v2",
+          "type": { "text": true }
+        }
+      }
+    },
+    "alternateRows": {
+      "displayName": "Alternate Row Color",
+      "properties": {
+        "show": { "displayName": "Show", "type": { "bool": true } },
+        "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+      }
+    },
+    "statusBar": {
+      "displayName": "Status Bar",
+      "properties": {
+        "show": { "displayName": "Show", "type": { "bool": true } }
+      }
+    },
+    "crossFilter": {
+      "displayName": "Cross-Filter",
+      "properties": {
+        "show": { "displayName": "Enable", "type": { "bool": true } }
+      }
+    }
+  },
+
+  "supportsHighlight": false,
+  "supportsKeyboardFocus": true,
+  "supportsLandingPage": true,
+  "supportsMultiVisualSelection": true,
+  "suppressDefaultTitle": true,
+  "tooltips": {
+    "supportedTypes": { "default": true, "canvas": true },
+    "roles": []
+  }
+}

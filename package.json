@@ -1,0 +1,44 @@
+{
+  "name": "nested-sort-matrix",
+  "version": "1.0.0",
+  "description": "Nested Sort Matrix — a Power BI custom visual replacing the stock matrix with true nested/hierarchical sorting and a runtime configuration panel for reordering, toggling, and renaming fields.",
+  "author": {
+    "name": "Nested Sort Matrix",
+    "email": "jmlankford3@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "powerbi",
+    "visual",
+    "matrix",
+    "table",
+    "nested-sort",
+    "pivot"
+  ],
+  "scripts": {
+    "pbiviz": "pbiviz",
+    "start": "pbiviz start",
+    "package": "pbiviz package",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
+  },
+  "dependencies": {
+    "@types/d3": "7.4.3",
+    "@types/lodash": "4.17.7",
+    "d3": "7.9.0",
+    "lodash": "4.17.21",
+    "powerbi-visuals-api": "5.10.0",
+    "powerbi-visuals-utils-dataviewutils": "6.1.0",
+    "powerbi-visuals-utils-formattingutils": "6.1.2",
+    "powerbi-visuals-utils-typeutils": "6.0.3"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "7.18.0",
+    "@typescript-eslint/parser": "7.18.0",
+    "eslint": "8.57.0",
+    "eslint-plugin-powerbi-visuals": "1.1.1",
+    "less": "4.2.0",
+    "powerbi-visuals-tools": "5.6.0",
+    "typescript": "5.5.4"
+  }
+}

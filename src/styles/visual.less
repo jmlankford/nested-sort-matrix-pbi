@@ -1,0 +1,819 @@
+/*
+ * visual.less
+ * -----------
+ * Layout + chrome for the Nested Sort Matrix. Theme colors (foreground,
+ * background, header, selection, borders) are applied inline by the renderer
+ * from host.colorPalette. This file only defines structure, the status-bar dark
+ * chrome (the single permitted hardcoded color), and the config-panel overlay.
+ */
+
+@statusbar-bg: #1e1e1e;
+@statusbar-fg: #e8e8e8;
+@statusbar-fg-dim: #9a9a9a;
+@panel-bg: #ffffff;
+@panel-shadow: rgba(0, 0, 0, 0.28);
+@font-stack: "Segoe UI", "Segoe UI Web (West European)", -apple-system, BlinkMacSystemFont, sans-serif;
+
+.nsm-root {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+
+    * {
+        box-sizing: border-box;
+    }
+}
+
+/* ---------------- Per-element font families (Fix 2) ----------------
+   Three independent font-family selections, applied via CSS variables set on
+   the root container in Visual.update(). Each targets only its element type. */
+.nsm-cell-rowfield,
+.nsm-rowlabel {
+    font-family: var(--nsm-row-font, @font-stack);
+}
+.nsm-hcell,
+.nsm-hlabel {
+    font-family: var(--nsm-col-font, @font-stack);
+}
+.nsm-cellvalue {
+    font-family: var(--nsm-val-font, @font-stack);
+}
+
+.nsm-content {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+}
+
+/* ---------------- Landing page ---------------- */
+.nsm-landing {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #605e5c;
+
+    .nsm-landing-inner {
+        text-align: center;
+        max-width: 420px;
+        padding: 24px;
+
+        h3 {
+            margin: 0 0 8px;
+            font-weight: 600;
+            font-size: 16px;
+        }
+        p {
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+    }
+}
+
+/* ---------------- Scroll container + virtualization ---------------- */
+.nsm-scroll {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    width: 100%;
+    overflow: auto;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+}
+
+.nsm-vscroll-sizer {
+    pointer-events: none;
+}
+
+/* ---------------- Sticky header ---------------- */
+.nsm-header {
+    /* Sticks vertically only; it must scroll horizontally with the body so the
+       value/pivot headers stay aligned with their columns. The row-field corner
+       cells freeze horizontally via their own sticky-left below. */
+    position: sticky;
+    top: 0;
+    /* Highest layer: the column header row must paint above all body content. */
+    z-index: 30;
+}
+
+.nsm-hcell {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    user-select: none;
+    /* Explicit base weight (see .nsm-row note). The renderer toggles 700/400. */
+    font-weight: 400;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+
+    .nsm-hlabel {
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .nsm-sortarrow {
+        margin-left: 4px;
+        font-size: 9px;
+        opacity: 0.8;
+    }
+}
+
+.nsm-hcell-value {
+    justify-content: flex-end;
+    text-align: right;
+    border-left: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.nsm-hcell-pivot {
+    justify-content: center;
+    text-align: center;
+    border-left: 1px solid rgba(0, 0, 0, 0.08);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+    font-weight: 600;
+}
+
+.nsm-hcell-rowfield {
+    /* Sticky top-left corner: above everything (sits inside the header layer). */
+    position: sticky;
+    z-index: 31;
+    top: 0;
+}
+
+.nsm-hcell-subtotal,
+.nsm-hcell-grandtotal {
+    font-style: italic;
+    opacity: 0.92;
+}
+
+/* ---------------- Body rows + cells ----------------
+   Body rows use position:relative with absolutely-positioned children (matching
+   the header's layout approach) so column alignment never depends on
+   flex/sticky interaction. The renderer sets each row's height/width inline and
+   each cell's left/width inline. */
+.nsm-row {
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+    /* Explicit opaque background from the theme so `.nsm-cell-rowfield {
+       background: inherit }` resolves to a real color (not transparent). The
+       renderer overrides this inline for selected/subtotal/alternating rows. */
+    background-color: var(--nsm-background, #ffffff);
+    /* Explicit base weight so the bold toggle (700) is always a visible step up
+       and never starts from an inherited semi-bold baseline. */
+    font-weight: 400;
+    /* Body rows sit in the lowest layer; the sticky header (z 30) paints above. */
+    z-index: 1;
+    /* Height is set inline by the renderer per-row via rowHeight. */
+}
+
+.nsm-cell {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    white-space: nowrap;
+    font-size: inherit;
+}
+
+.nsm-cell-rowfield {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    z-index: 20;
+    background: inherit;
+    overflow: hidden;
+    border-right: 1px solid rgba(0, 0, 0, 0.04);
+
+    .nsm-rowlabel {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+/* Non-frozen tabular row-field body cell: a regular scrolling cell — no opaque
+   background, no z-index elevation. */
+.nsm-cell-rowfield-tabular {
+    overflow: hidden;
+    border-right: 1px solid rgba(0, 0, 0, 0.04);
+
+    .nsm-rowlabel {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+/* Tabular row-field header cell (levels 1+): sits on the bottom header row. */
+.nsm-hcell-tabular-rowfield {
+    background: inherit;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+    border-right: 1px solid rgba(0, 0, 0, 0.06);
+
+    .nsm-hlabel {
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+}
+
+.nsm-cell-value {
+    .nsm-cf-icon {
+        margin-right: 4px;
+        font-size: 11px;
+        line-height: 1;
+        z-index: 1;
+    }
+}
+
+.nsm-cellvalue {
+    font-weight: 400;
+    text-align: right;
+    width: 100%;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.nsm-cell-spacer {
+    flex: 0 0 auto;
+}
+
+.nsm-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    min-width: 14px;
+    margin-right: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    opacity: 0.85;
+    user-select: none;
+
+    &:hover {
+        opacity: 1;
+    }
+}
+
+.nsm-chevron-spacer {
+    display: inline-block;
+    width: 14px;
+    min-width: 14px;
+    margin-right: 4px;
+}
+
+.nsm-expand-btn {
+    cursor: pointer;
+    margin-right: 4px;
+    flex-shrink: 0;
+    user-select: none;
+    display: inline-block;
+    line-height: 1;
+
+    &:hover {
+        opacity: 0.7;
+    }
+}
+
+.nsm-row-subtotal,
+.nsm-row-grandtotal {
+    /* Explicit bold weight on the row. The row-field label inherits this; the
+       value-cell spans are bolded inline by the renderer (see .nsm-cellvalue). */
+    font-weight: 700;
+}
+
+/* ---------------- Column resize handle (Fix 3) ---------------- */
+.nsm-col-resize-handle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 4px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 5;
+
+    &:hover {
+        background-color: var(--nsm-theme-accent, #0078d4);
+        opacity: 0.6;
+    }
+}
+
+/* ---------------- Status bar ---------------- */
+.nsm-statusbar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: @statusbar-bg;
+    color: @statusbar-fg;
+    font-size: 11px;
+    padding: 0 8px;
+    z-index: 20;
+    user-select: none;
+
+    .nsm-statusbar-left {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-width: 0;
+        flex: 1 1 auto;
+    }
+
+    .nsm-statusbar-right {
+        flex: 0 0 auto;
+        padding-left: 8px;
+    }
+
+    .nsm-statusbar-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 18px;
+        padding: 0 6px;
+        background: transparent;
+        color: @statusbar-fg;
+        border: 1px solid transparent;
+        border-radius: 2px;
+        font: inherit;
+        cursor: pointer;
+        white-space: nowrap;
+
+        &:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.18);
+        }
+        .nsm-gear,
+        .nsm-chev {
+            font-size: 12px;
+            line-height: 1;
+        }
+    }
+
+    .nsm-statusbar-sort {
+        margin-left: 8px;
+        color: @statusbar-fg-dim;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+    }
+
+    .nsm-statusbar-rowcount {
+        color: @statusbar-fg-dim;
+        white-space: nowrap;
+    }
+}
+
+/* ---------------- Config panel overlay ---------------- */
+.nsm-config-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.32);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 50;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 160ms ease;
+
+    &.open {
+        opacity: 1;
+        visibility: visible;
+    }
+}
+
+.nsm-config-panel {
+    width: 100%;
+    max-width: 720px;
+    height: 66%;
+    background: @panel-bg;
+    border-radius: 8px 8px 0 0;
+    box-shadow: 0 -6px 24px @panel-shadow;
+    display: flex;
+    flex-direction: column;
+    color: #252423;
+    transform: translateY(100%);
+    transition: transform 200ms ease;
+
+    .nsm-config-overlay.open & {
+        transform: translateY(0);
+    }
+}
+
+.nsm-config-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid #edebe9;
+
+    .nsm-config-title {
+        font-size: 15px;
+        font-weight: 600;
+    }
+    .nsm-config-close {
+        background: transparent;
+        border: none;
+        font-size: 14px;
+        cursor: pointer;
+        color: #605e5c;
+        padding: 4px 8px;
+        border-radius: 2px;
+
+        &:hover {
+            background: #f3f2f1;
+        }
+    }
+}
+
+.nsm-config-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 8px 16px 0;
+    border-bottom: 1px solid #edebe9;
+
+    .nsm-config-tab {
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        padding: 8px 12px;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        color: #605e5c;
+
+        &.active {
+            color: #252423;
+            border-bottom-color: #118dff;
+            font-weight: 600;
+        }
+        &.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        &:hover:not(.disabled):not(.active) {
+            background: #f3f2f1;
+        }
+    }
+}
+
+.nsm-config-list {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 12px 16px;
+
+    .nsm-config-empty {
+        color: #a19f9d;
+        font-size: 13px;
+        text-align: center;
+        padding: 24px;
+    }
+}
+
+.nsm-config-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background: #faf9f8;
+    border: 1px solid #edebe9;
+    border-radius: 4px;
+    cursor: grab;
+
+    &.dragging {
+        opacity: 0.5;
+    }
+    &.drop-target {
+        border-color: #118dff;
+        box-shadow: inset 0 0 0 1px #118dff;
+    }
+    &.hidden-field {
+        opacity: 0.55;
+        .nsm-config-name {
+            text-decoration: line-through;
+        }
+    }
+
+    .nsm-config-handle {
+        cursor: grab;
+        color: #a19f9d;
+        font-size: 14px;
+        letter-spacing: -2px;
+        user-select: none;
+    }
+
+    .nsm-config-eye {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        padding: 2px 4px;
+        border-radius: 2px;
+
+        &:hover {
+            background: #f3f2f1;
+        }
+    }
+
+    .nsm-config-name {
+        flex: 0 0 38%;
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .nsm-config-rename {
+        flex: 1 1 auto;
+        padding: 5px 8px;
+        font: inherit;
+        font-size: 12px;
+        border: 1px solid #c8c6c4;
+        border-radius: 3px;
+
+        &:focus {
+            outline: none;
+            border-color: #118dff;
+        }
+    }
+}
+
+.nsm-config-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid #edebe9;
+
+    .nsm-config-btn {
+        padding: 6px 18px;
+        font: inherit;
+        font-size: 13px;
+        border-radius: 3px;
+        cursor: pointer;
+        border: 1px solid #c8c6c4;
+        background: #ffffff;
+
+        &:hover {
+            background: #f3f2f1;
+        }
+    }
+    .nsm-config-done {
+        background: #118dff;
+        border-color: #118dff;
+        color: #ffffff;
+
+        &:hover {
+            background: #0f7ae0;
+        }
+    }
+}
+
+/* ---------------- Conditional Formatting panel ---------------- */
+.nsm-cf-panel {
+    position: absolute;
+    right: 8px;
+    bottom: 32px; /* above status bar */
+    width: 360px;
+    max-height: 80%;
+    overflow-y: auto;
+    background: var(--nsm-background, #ffffff);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    z-index: 1000;
+    font-family: "Segoe UI", sans-serif;
+    font-size: 12px;
+    display: none;
+
+    &.nsm-cf-panel-open {
+        display: block;
+    }
+}
+
+.nsm-cf-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px 8px;
+    font-weight: 600;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+
+    .nsm-cf-close {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        font-size: 13px;
+        color: rgba(0, 0, 0, 0.55);
+        padding: 2px 6px;
+
+        &:hover {
+            color: rgba(0, 0, 0, 0.85);
+        }
+    }
+}
+
+.nsm-cf-panel-body {
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.nsm-cf-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    label {
+        flex: 0 0 110px;
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    select {
+        font-size: 11px;
+        padding: 2px 4px;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        border-radius: 2px;
+        height: 24px;
+    }
+}
+
+.nsm-cf-toggle-group {
+    display: inline-flex;
+    gap: 2px;
+
+    .nsm-cf-toggle {
+        font-size: 11px;
+        padding: 2px 8px;
+        height: 24px;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        border-radius: 2px;
+        background: transparent;
+        cursor: pointer;
+
+        &.nsm-cf-toggle-active {
+            background: #0078d4;
+            color: #ffffff;
+            border-color: #0078d4;
+        }
+    }
+}
+
+.nsm-cf-dynamic {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.nsm-cf-rule-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+
+    select,
+    input[type="text"],
+    input[type="number"] {
+        font-size: 11px;
+        padding: 2px 4px;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        border-radius: 2px;
+        height: 24px;
+    }
+
+    input[type="text"] {
+        width: 60px;
+    }
+
+    .nsm-cf-rule-remove {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        color: rgba(0, 0, 0, 0.5);
+        font-size: 11px;
+
+        &:hover {
+            color: #d13438;
+        }
+    }
+}
+
+.nsm-cf-color-input {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+
+    .nsm-cf-color-swatch {
+        width: 24px;
+        height: 24px;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        border-radius: 2px;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+    input[type="text"] {
+        width: 80px;
+        font-size: 11px;
+        padding: 2px 4px;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        border-radius: 2px;
+        height: 24px;
+        font-family: "Courier New", monospace;
+
+        &.nsm-cf-hex-invalid {
+            border-color: #d13438;
+        }
+    }
+}
+
+.nsm-cf-panel-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px 12px 10px;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+
+    button {
+        padding: 4px 16px;
+        font-size: 12px;
+        border-radius: 2px;
+        cursor: pointer;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+
+        &.nsm-cf-btn-primary {
+            background: #0078d4;
+            color: white;
+            border-color: #0078d4;
+        }
+
+        &.nsm-cf-btn-secondary {
+            background: transparent;
+        }
+    }
+}
+
+.nsm-cf-add-rule {
+    font-size: 11px;
+    color: #0078d4;
+    cursor: pointer;
+    padding: 2px 0;
+    background: none;
+    border: none;
+    text-align: left;
+
+    &:hover {
+        text-decoration: underline;
+    }
+}
+
+.nsm-cf-and-btn {
+    font-size: 10px;
+    color: #0078d4;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 4px;
+    white-space: nowrap;
+
+    &:hover {
+        text-decoration: underline;
+    }
+}
+
+.nsm-cf-and-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 16px;
+    margin-top: 2px;
+    margin-bottom: 2px;
+}
+
+.nsm-cf-and-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(0, 0, 0, 0.5);
+    flex: 0 0 28px;
+}

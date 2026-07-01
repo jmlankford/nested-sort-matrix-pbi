@@ -1,0 +1,30 @@
+{
+  "privileges": [],
+  "dataRoles": [
+    { "name": "measure", "displayName": "Measure", "kind": "Measure" }
+  ],
+  "dataViewMappings": [
+    {
+      "table": {
+        "rows": {
+          "select": [
+            { "for": { "in": "measure" } }
+          ]
+        }
+      }
+    }
+  ],
+  "objects": {
+    "card1": {
+      "displayName": "CF Test Card",
+      "properties": {
+        "fillColor": {
+          "displayName": "Fill color",
+          "type": { "fill": { "solid": { "color": true } } }
+        }
+      }
+    }
+  },
+  "supportsLandingPage": true,
+  "suppressDefaultTitle": true
+}
