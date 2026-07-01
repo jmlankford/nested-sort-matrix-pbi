@@ -382,6 +382,27 @@ export class Visual implements IVisual {
             return;
         }
 
+        // Apply immediately to in-memory state and repaint — do not wait for the
+        // host's persistProperties round-trip, which may be treated as a lightweight
+        // update or read from a stale DataView.
+        const current = this.cfBySlot.get(slotIndex) ?? { ...DEFAULTS.cf };
+        this.cfBySlot.set(slotIndex, {
+            ...current,
+            cfType: state.cfType,
+            cfApplyTo: state.applyTo,
+            applyToTotals: state.applyToTotals,
+            csBasis: state.colorScale.basis,
+            csLowColor: state.colorScale.lowColor,
+            csUseMid: state.colorScale.useMid,
+            csMidColor: state.colorScale.midColor,
+            csHighColor: state.colorScale.highColor,
+            rulesV2: state.rules.map(r => ({ ...r })),
+            defaultColor: state.defaultColor,
+            fieldValueSlot: state.fieldValue.measureSlotIndex,
+            fieldValueApplyAs: state.fieldValue.applyAs
+        });
+        this.rerender(true);
+
         const objects: powerbi.VisualObjectInstancesToPersist = {
             merge: [
                 {
@@ -475,12 +496,16 @@ export class Visual implements IVisual {
             this.valueNameBySlot.clear();
             this.valueFormatBySlot.clear();
             this.specificColumnBySlot.clear();
-            this.cfBySlot.clear();
+            // CF is deliberately NOT re-read here: this.dataView is the last
+            // DataView the host delivered, so parseCF would clobber a newer
+            // in-memory CF applied by the CF panel (saveCfState writes cfBySlot
+            // directly). CF is never edited via the config panel, so leaving
+            // cfBySlot untouched is always safe; the next host update() re-reads
+            // it from fresh column objects.
             activeValueFields.forEach((f) => {
                 this.valueNameBySlot.set(f.slotIndex, f.displayName);
                 this.valueFormatBySlot.set(f.slotIndex, parseValueFormat(f.columnObjects));
                 this.specificColumnBySlot.set(f.slotIndex, parseSpecificColumn(f.columnObjects));
-                this.cfBySlot.set(f.slotIndex, parseCF(f.columnObjects));
             });
             const result = transform(
                 this.dataView,
