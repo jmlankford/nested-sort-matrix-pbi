@@ -1053,13 +1053,6 @@ export class Renderer {
         const isAlt = rowIndex % 2 === 1;
 
         const raw = row.node.values[col.id];
-        // TEMPORARY diagnostic (Fix 2): flag group rows with no aggregated value.
-        if (row.kind === "group" && raw === undefined) {
-            console.warn(
-                `[NSM] Group row "${row.node.label}" has undefined value for col.id="${col.id}". Available keys:`,
-                Object.keys(row.node.values)
-            );
-        }
         const value = raw === undefined ? null : raw;
 
         // Number text — re-formatted when the specific column overrides unit/decimals.

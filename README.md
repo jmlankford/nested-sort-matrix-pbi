@@ -231,3 +231,4 @@ Or use the helper script:
 |---|---|
 | 1.0.0.0 | Initial build |
 | 1.0.1.0 | Data binding fix (stacked field wells), layout modes, CF panel, getFormattingModel() migration |
+| 1.0.2.0 | CF panel fixes (visibility, click-outside handling, defaultColor, AND compound rules), tabular group row suppression |

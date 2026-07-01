@@ -124,8 +124,6 @@ export class CfPanel {
     private state: CfPanelState = CfPanel.emptyState();
     private onSave: CfPanelSaveCallback;
     private availableMeasures: { slotIndex: number; displayName: string }[] = [];
-    /** TEMP DIAGNOSTIC — raw state as received by open(), for the debug display. */
-    private lastLoadedState: string = "";
 
     constructor(hostElement: HTMLElement, onSave: CfPanelSaveCallback) {
         this.container = hostElement;
@@ -159,7 +157,6 @@ export class CfPanel {
         this.currentSlot = slotIndex;
         this.measureName = displayName;
         this.state = clone(state);
-        this.lastLoadedState = JSON.stringify(state);
         this.render();
         this.overlay.classList.add("nsm-cf-panel-open");
         this.applyOverlayStyles();
@@ -267,24 +264,6 @@ export class CfPanel {
         }
 
         this.overlay.appendChild(body);
-
-        // TEMP DIAGNOSTIC — remove before release
-        const dbg = el("details", "nsm-cf-debug");
-        const summary = el("summary", undefined, "Debug: stored CF state");
-        dbg.appendChild(summary);
-        const pre = el("pre", "nsm-cf-debug-pre");
-        pre.style.fontSize = "9px";
-        pre.style.maxHeight = "120px";
-        pre.style.overflow = "auto";
-        pre.style.whiteSpace = "pre-wrap";
-        pre.style.wordBreak = "break-all";
-        pre.style.userSelect = "text";
-        pre.style.cursor = "text";
-        pre.textContent =
-            "=== WORKING STATE ===\n" + JSON.stringify(this.state, null, 2) +
-            "\n\n=== LOADED FROM PERSISTENCE ===\n" + this.lastLoadedState;
-        dbg.appendChild(pre);
-        this.overlay.querySelector(".nsm-cf-panel-body")?.prepend(dbg);
 
         // Footer.
         const footer = el("div", "nsm-cf-panel-footer");
