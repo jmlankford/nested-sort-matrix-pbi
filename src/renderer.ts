@@ -527,6 +527,8 @@ export class Renderer {
             return level < lv.length ? lv[level] : true;
         };
 
+        const mode = input.settings.rowHeaders.layoutMode;
+
         const walk = (node: RowTreeNode): void => {
             if (node.isLeaf) {
                 rows.push({
@@ -540,6 +542,27 @@ export class Renderer {
             }
             const expanded = input.expanded.has(node.key);
             const stEnabled = subtotalOn(node.level);
+
+            // In tabular mode, group rows are suppressed — leaf rows carry the full
+            // ancestor label chain across columns, and subtotals serve as group
+            // summaries. Rendering group rows in tabular mode creates visual
+            // duplication because the group aggregate appears both in the group row
+            // and the subtotal row. Recurse into children only; still emit the
+            // subtotal so each group has its summary line.
+            if (mode === "tabular") {
+                node.children.forEach(walk);
+                if (stEnabled) {
+                    rows.push({
+                        node,
+                        kind: "subtotal",
+                        level: node.level,
+                        showValues: true,
+                        selectable: false
+                    });
+                }
+                return;
+            }
+
             rows.push({
                 node,
                 kind: "group",
