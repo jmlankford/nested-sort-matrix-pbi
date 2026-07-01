@@ -235,6 +235,20 @@ export class CfPanel {
 
         this.overlay.appendChild(body);
 
+        // TEMP DIAGNOSTIC — remove before release
+        const dbg = el("details", "nsm-cf-debug");
+        const summary = el("summary", undefined, "Debug: stored CF state");
+        dbg.appendChild(summary);
+        const pre = el("pre", "nsm-cf-debug-pre");
+        pre.style.fontSize = "9px";
+        pre.style.maxHeight = "120px";
+        pre.style.overflow = "auto";
+        pre.style.whiteSpace = "pre-wrap";
+        pre.style.wordBreak = "break-all";
+        pre.textContent = JSON.stringify(this.state, null, 2);
+        dbg.appendChild(pre);
+        this.overlay.querySelector(".nsm-cf-panel-body")?.prepend(dbg);
+
         // Footer.
         const footer = el("div", "nsm-cf-panel-footer");
         const cancelBtn = el("button", "nsm-cf-btn-secondary", "Cancel");
