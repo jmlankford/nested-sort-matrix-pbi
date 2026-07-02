@@ -99,6 +99,10 @@ export class Visual implements IVisual {
     private valueFormatBySlot = new Map<number, ValueFormatSettings>();
     private specificColumnBySlot = new Map<number, SpecificColumnSettings>();
     private cfBySlot = new Map<number, CFSettings>();
+    /** Slots with locally-applied CF awaiting persistence confirmation.
+     *  Key: slotIndex. Value: JSON of the CFSettings we expect parseCF to
+     *  eventually return once the host merges the persisted objects. */
+    private cfPendingConfirm = new Map<number, string>();
     private valueNameBySlot = new Map<number, string>();
     private allGroupKeys: string[] = [];
     /** Restored/edited column widths, persisted via persistProperties (Fix 3D). */
@@ -254,7 +258,20 @@ export class Visual implements IVisual {
         activeValueFields.forEach((f) => {
             this.valueFormatBySlot.set(f.slotIndex, parseValueFormat(f.columnObjects));
             this.specificColumnBySlot.set(f.slotIndex, parseSpecificColumn(f.columnObjects));
-            this.cfBySlot.set(f.slotIndex, parseCF(f.columnObjects));
+            const parsed = parseCF(f.columnObjects);
+            const pending = this.cfPendingConfirm.get(f.slotIndex);
+            if (pending !== undefined) {
+                if (JSON.stringify(parsed) === pending) {
+                    // Persistence round-trip complete — parsed now matches local state.
+                    this.cfPendingConfirm.delete(f.slotIndex);
+                    this.cfBySlot.set(f.slotIndex, parsed);
+                } else {
+                    // Host DataView not yet carrying the persisted CF — keep local state.
+                    this.cfBySlot.set(f.slotIndex, JSON.parse(pending));
+                }
+            } else {
+                this.cfBySlot.set(f.slotIndex, parsed);
+            }
             this.valueNameBySlot.set(f.slotIndex, f.displayName);
         });
 
@@ -401,6 +418,7 @@ export class Visual implements IVisual {
             fieldValueSlot: state.fieldValue.measureSlotIndex,
             fieldValueApplyAs: state.fieldValue.applyAs
         });
+        this.cfPendingConfirm.set(slotIndex, JSON.stringify(this.cfBySlot.get(slotIndex)));
         this.rerender(true);
 
         const objects: powerbi.VisualObjectInstancesToPersist = {

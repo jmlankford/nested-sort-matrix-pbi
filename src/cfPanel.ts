@@ -129,6 +129,9 @@ export class CfPanel {
         this.container = hostElement;
         this.onSave = onSave;
         this.overlay = el("div", "nsm-cf-panel");
+        // Inert until first open: no paint, no hit-testing.
+        this.overlay.style.display = "none";
+        this.overlay.style.pointerEvents = "none";
         // Catch-all: clicks inside the panel must not reach the host's
         // click-outside-closes listener.
         this.overlay.addEventListener("click", (e: MouseEvent) => e.stopPropagation());
@@ -164,8 +167,9 @@ export class CfPanel {
 
     public close(): void {
         this.overlay.classList.remove("nsm-cf-panel-open");
-        // Clear the fail-safe inline display so the class-based display:none applies.
-        this.overlay.style.display = "";
+        // Fully inert when closed: no paint, no hit-testing.
+        this.overlay.style.display = "none";
+        this.overlay.style.pointerEvents = "none";
     }
 
     /** The panel's root element (used by the host's click-outside check). */
@@ -185,6 +189,7 @@ export class CfPanel {
         s.zIndex = "1000";
         if (this.isOpen()) {
             s.display = "block";
+            s.pointerEvents = "auto";
         }
     }
 
