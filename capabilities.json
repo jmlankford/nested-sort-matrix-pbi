@@ -20,18 +20,28 @@
 
   "dataViewMappings": [
     {
-      "table": {
+      "matrix": {
         "rows": {
-          "select": [
-            { "for": { "in": "rowFields" } },
-            { "for": { "in": "columnFields" } },
-            { "for": { "in": "values" } }
-          ]
+          "for": { "in": "rowFields" },
+          "dataReductionAlgorithm": { "window": { "count": 30000 } }
         },
-        "rowCount": { "preferred": { "max": 30000 } }
+        "columns": {
+          "for": { "in": "columnFields" }
+        },
+        "values": {
+          "for": { "in": "values" }
+        }
       }
     }
   ],
+
+  "subtotals": {
+    "matrix": {
+      "rowSubtotals": { "defaultValue": true },
+      "columnSubtotals": { "defaultValue": true },
+      "levelSubtotalEnabled": { "defaultValue": true }
+    }
+  },
 
   "objects": {
     "general": {

@@ -1,18 +1,22 @@
 /*
  * dataTransformer.ts
  * ------------------
- * Converts a flat Power BI Table DataView into the internal tree model the
+ * Converts a Power BI **Matrix** DataView into the internal tree model the
  * renderer consumes. Responsibilities:
- *   - Field discovery (which row/value/col role slots are actually populated).
- *   - Client-side grouping into a row hierarchy (RowTreeNode tree).
- *   - Crosstab / pivot computation when column-field slots are populated.
- *   - SUM aggregation for subtotals, column subtotals, grand totals.
+ *   - Field discovery (row / column-group / value role slots from the matrix
+ *     hierarchies and value sources).
+ *   - Walk of dataView.matrix.rows.root into the RowTreeNode hierarchy. The
+ *     engine supplies every level's values (including subtotal / grand-total
+ *     nodes), so there is NO client-side aggregation.
+ *   - Crosstab / pivot column layout from dataView.matrix.columns.root.
  *
- * KNOWN LIMITATION (documented in README): subtotals are computed by SUMMING
- * pre-computed row-level measure values. Non-additive measures (DISTINCTCOUNT,
- * ratios, AVERAGE, etc.) will therefore produce incorrect rolled-up values.
- * Workaround: author a dedicated subtotal DAX measure and map it to a separate
- * value slot.
+ * Because the engine evaluates each measure at the true scope of every
+ * hierarchy node, level-aware and non-additive measures (DISTINCTCOUNT, ratios,
+ * AVERAGE, ISINSCOPE dispatchers, ...) now roll up correctly — the summing that
+ * the old Table-DataView path performed has been removed entirely.
+ *
+ * Value cells may be text (text measures). They are stored raw (number | string
+ * | null); numeric-only checks live in the consumers (renderer / CF / sort).
  *
  * Strict TypeScript: no `any`. The only `unknown` usage is JSON.parse boundaries
  * which are validated before use.
@@ -20,11 +24,14 @@
 
 import powerbi from "powerbi-visuals-api";
 import DataView = powerbi.DataView;
-import DataViewTable = powerbi.DataViewTable;
+import DataViewMatrix = powerbi.DataViewMatrix;
+import DataViewMatrixNode = powerbi.DataViewMatrixNode;
+import DataViewHierarchyLevel = powerbi.DataViewHierarchyLevel;
 import DataViewMetadataColumn = powerbi.DataViewMetadataColumn;
 import PrimitiveValue = powerbi.PrimitiveValue;
 import ISelectionId = powerbi.visuals.ISelectionId;
 import DataViewObjects = powerbi.DataViewObjects;
+import CustomVisualOpaqueIdentity = powerbi.visuals.CustomVisualOpaqueIdentity;
 
 import { valueFormatter } from "powerbi-visuals-utils-formattingutils";
 
@@ -35,7 +42,6 @@ import { VisualSettings } from "./settings";
 // native Power BI matrix field wells.
 const ROLE_ROW_FIELDS = "rowFields";
 const ROLE_COLUMN_FIELDS = "columnFields";
-const ROLE_VALUES = "values";
 
 // Internal key separators. Printable but deliberately unlikely to appear in
 // real field values, so composed path/column keys never collide.
@@ -51,12 +57,19 @@ const BLANK_LABEL = "(Blank)";
 
 export type FieldRole = "row" | "value" | "col";
 
-/** Describes a single populated role slot bound to a Table DataView column. */
+/** A raw value cell from the matrix — text measures are kept as strings. */
+export type CellValue = number | string | null;
+
+/** Describes a single populated role slot bound to a Matrix DataView source. */
 export interface FieldMeta {
     role: FieldRole;
-    /** Dense 0-based position of this field within its bucket, in DataView column order. */
+    /** Dense 0-based position of this field within its bucket, in projection order. */
     slotIndex: number;
-    /** Index into dataView.table.columns. */
+    /**
+     * Synthetic dense index across all discovered fields. In the matrix world
+     * there is no single flat column array, so this is used only as a stable,
+     * unique key for internal formatter maps.
+     */
     columnIndex: number;
     queryName: string;
     /** Original display name from the DataView (designer/model supplied). */
@@ -65,7 +78,7 @@ export interface FieldMeta {
     displayName: string;
     formatString: string;
     isNumeric: boolean;
-    /** Per-column objects bag (carries per-slot value formatting & CF). */
+    /** Per-source objects bag (carries per-slot value formatting, CF & subtotal toggles). */
     columnObjects: DataViewObjects | undefined;
 }
 
@@ -73,7 +86,7 @@ export interface FieldMeta {
 export interface LeafColumn {
     /** Stable id used to key cell values on each node. */
     id: string;
-    /** Original value slot index (0..14) — used for CF & number formatting. */
+    /** Original value slot index (0..N) — used for CF & number formatting. */
     valueSlotIndex: number;
     /** Path of column-field labels ([] in non-pivot mode). */
     pivotPath: string[];
@@ -92,15 +105,19 @@ export interface RowTreeNode {
     children: RowTreeNode[];
     isLeaf: boolean;
     isGrandTotal: boolean;
-    /** Aggregated measure values keyed by LeafColumn.id. */
-    values: { [leafColId: string]: number | null };
-    /** Underlying table row indices — populated on leaf nodes only. */
+    /** Engine-computed measure values keyed by LeafColumn.id (may be text). */
+    values: { [leafColId: string]: CellValue };
+    /** Underlying table row indices — no longer populated under matrix (see selection Phase 2). */
     rowIndices: number[];
     /** Lazily-created selection id for this node (built on demand). */
     selectionId?: ISelectionId;
+    /** Opaque identity of the backing matrix node (used for selection & expand/collapse). */
+    identity?: CustomVisualOpaqueIdentity;
+    /** The backing matrix node, retained for Phase 2 selection / expansion services. */
+    matrixNode?: DataViewMatrixNode;
+    /** Engine expansion flag mirrored from the matrix node (undefined = not expandable). */
+    isCollapsed?: boolean;
     parent?: RowTreeNode;
-    /** Transient child lookup used only during construction. */
-    _childMap?: Map<string, RowTreeNode>;
 }
 
 export interface ColumnHeaderCell {
@@ -128,13 +145,16 @@ export interface TransformResult {
     activeRowFields: FieldMeta[];
     activeValueFields: FieldMeta[];
     activeColFields: FieldMeta[];
-    /** Underlying data row count. */
+    /** Leaf (innermost) row count. */
     rowCount: number;
     hasRowFields: boolean;
     isPivot: boolean;
 }
 
-/** Factory injected by the visual so the transformer can build selection ids. */
+/**
+ * Factory injected by the visual so the transformer can build selection ids.
+ * Retained for API stability; matrix-node-based selection lands in Phase 2.
+ */
 export type SelectionIdFactory = (rowIndices: number[]) => ISelectionId | undefined;
 
 // ---------------------------------------------------------------------------
@@ -168,42 +188,53 @@ function makeFieldMeta(
 }
 
 /**
- * Discover the populated fields in the Table DataView by reading each column's
- * role membership (column.roles). Each of the three stacked buckets
- * (rowFields / columnFields / values) may hold many fields.
+ * Discover the populated fields from the Matrix DataView:
+ *   - row fields  from matrix.rows.levels[*].sources (role === rowFields)
+ *   - col fields  from matrix.columns.levels[*].sources (role === columnFields)
+ *   - value fields from matrix.valueSources (already in projection order)
  *
- * The slot index assigned to each field is its dense position WITHIN its bucket
- * in DataView column order. That order reflects how the report developer stacked
- * the fields in the field well, i.e. the designer's intended hierarchy order;
- * the config panel can reorder from this baseline. All downstream logic keys on
- * this slotIndex, so it stays consistent across the visual.
+ * The slot index assigned to each field is its dense position within its bucket
+ * in projection order — the same order the engine used to build the hierarchies.
+ * Row-field slotIndex therefore equals the matrix hierarchy level, which the
+ * downstream per-level subtotal toggles rely on.
  */
 export function discoverFields(dataView: DataView | undefined): DiscoveredFields {
     const result: DiscoveredFields = { rows: [], values: [], cols: [] };
-    const table: DataViewTable | undefined = dataView && dataView.table;
-    if (!table || !table.columns) {
+    const matrix: DataViewMatrix | undefined = dataView && dataView.matrix;
+    if (!matrix) {
         return result;
     }
 
+    let synthIndex = 0;
     let rowSlot = 0;
     let colSlot = 0;
     let valSlot = 0;
 
-    table.columns.forEach((column: DataViewMetadataColumn, columnIndex: number) => {
-        const roles = column.roles;
-        if (!roles) {
-            return;
-        }
-        if (roles[ROLE_ROW_FIELDS]) {
-            result.rows.push(makeFieldMeta("row", rowSlot++, columnIndex, column));
-        } else if (roles[ROLE_COLUMN_FIELDS]) {
-            result.cols.push(makeFieldMeta("col", colSlot++, columnIndex, column));
-        } else if (roles[ROLE_VALUES]) {
-            result.values.push(makeFieldMeta("value", valSlot++, columnIndex, column));
-        }
+    const rowLevels = (matrix.rows && matrix.rows.levels) || [];
+    rowLevels.forEach((level: DataViewHierarchyLevel) => {
+        (level.sources || []).forEach((src: DataViewMetadataColumn) => {
+            if (src.roles && src.roles[ROLE_ROW_FIELDS]) {
+                result.rows.push(makeFieldMeta("row", rowSlot++, synthIndex++, src));
+            }
+        });
     });
 
-    // Arrays are already in DataView column order (== bucket stack order).
+    const colLevels = (matrix.columns && matrix.columns.levels) || [];
+    colLevels.forEach((level: DataViewHierarchyLevel) => {
+        (level.sources || []).forEach((src: DataViewMetadataColumn) => {
+            // The innermost column level holds the measures (role === values);
+            // only true column-group fields belong in the pivot bucket.
+            if (src.roles && src.roles[ROLE_COLUMN_FIELDS]) {
+                result.cols.push(makeFieldMeta("col", colSlot++, synthIndex++, src));
+            }
+        });
+    });
+
+    const valueSources = matrix.valueSources || [];
+    valueSources.forEach((src: DataViewMetadataColumn) => {
+        result.values.push(makeFieldMeta("value", valSlot++, synthIndex++, src));
+    });
+
     return result;
 }
 
@@ -211,19 +242,12 @@ export function discoverFields(dataView: DataView | undefined): DiscoveredFields
 // Formatting helpers.
 // ---------------------------------------------------------------------------
 
-function buildFormatters(fields: FieldMeta[]): Map<number, valueFormatter.IValueFormatter> {
-    const map = new Map<number, valueFormatter.IValueFormatter>();
-    fields.forEach((f) => {
-        map.set(
-            f.columnIndex,
-            valueFormatter.create({ format: f.formatString || undefined })
-        );
-    });
-    return map;
+function makeFormatter(formatString: string): valueFormatter.IValueFormatter {
+    return valueFormatter.create({ format: formatString || undefined });
 }
 
 function formatLabel(
-    raw: PrimitiveValue,
+    raw: PrimitiveValue | null | undefined,
     formatter: valueFormatter.IValueFormatter | undefined
 ): string {
     if (raw === null || raw === undefined || raw === "") {
@@ -236,218 +260,186 @@ function formatLabel(
     return String(raw);
 }
 
-function toNumber(raw: PrimitiveValue): number | null {
-    if (raw === null || raw === undefined || raw === "") {
+/** Normalize a raw matrix cell into the stored value union (keeps text). */
+function normalizeCell(raw: PrimitiveValue | null | undefined): CellValue {
+    if (raw === null || raw === undefined) {
         return null;
     }
-    const n = typeof raw === "number" ? raw : Number(raw);
-    return isNaN(n) ? null : n;
-}
-
-// ---------------------------------------------------------------------------
-// Column (pivot) computation.
-// ---------------------------------------------------------------------------
-
-interface ColTreeNode {
-    label: string;
-    level: number;
-    path: string[];
-    children: ColTreeNode[];
-    childMap: Map<string, ColTreeNode>;
-}
-
-function newColNode(label: string, level: number, path: string[]): ColTreeNode {
-    return { label, level, path, children: [], childMap: new Map() };
-}
-
-interface ColumnPlan {
-    leafColumns: LeafColumn[];
-    columnHeader: ColumnHeaderLayout;
-    /**
-     * For a given data row's column path, returns every LeafColumn.id the row's
-     * value contributes to (exact leaf + ancestor subtotals + grand total),
-     * for a single value slot. Cached by joined path.
-     */
-    contributingColumnIds: (colPath: string[], valueSlotIndex: number) => string[];
+    if (typeof raw === "number" || typeof raw === "string") {
+        return raw;
+    }
+    // boolean / Date / other — render as text; numeric consumers ignore it.
+    return String(raw);
 }
 
 function leafColId(pivotPathKey: string, valueSlotIndex: number): string {
     return `${pivotPathKey}${ID_SEP}v${valueSlotIndex}`;
 }
 
-function buildNonPivotPlan(valueFields: FieldMeta[]): ColumnPlan {
-    const leafColumns: LeafColumn[] = valueFields.map((vf) => ({
-        id: leafColId("", vf.slotIndex),
-        valueSlotIndex: vf.slotIndex,
-        pivotPath: [],
-        isColSubtotal: false,
-        isColGrandTotal: false
-    }));
+// ---------------------------------------------------------------------------
+// Column (pivot) plan — built from the matrix columns hierarchy.
+// ---------------------------------------------------------------------------
 
-    const columnHeader: ColumnHeaderLayout = {
-        pivotRows: [],
-        leafRow: leafColumns
-    };
-
-    return {
-        leafColumns,
-        columnHeader,
-        contributingColumnIds: (_colPath: string[], valueSlotIndex: number) => [
-            leafColId("", valueSlotIndex)
-        ]
-    };
+/** Per-column-leaf descriptor recorded in matrix DFS (values-key) order. */
+interface ColLeafInfo {
+    path: string[];
+    isColSubtotal: boolean;
+    isColGrandTotal: boolean;
 }
 
-function buildPivotPlan(
-    table: DataViewTable,
-    colFields: FieldMeta[],
-    valueFields: FieldMeta[],
-    settings: VisualSettings
-): ColumnPlan {
-    const formatters = buildFormatters(colFields);
-    const lastColLevel = colFields.length - 1;
+interface ColumnPlan {
+    leafColumns: LeafColumn[];
+    columnHeader: ColumnHeaderLayout;
+    /** DFS-ordinal -> column-leaf descriptor; keys match matrix node value keys. */
+    ordinalInfo: ColLeafInfo[];
+}
 
-    // 1. Build the column tree from the unique column-field tuples in the data.
-    const root = newColNode("", -1, []);
-    const rows = table.rows || [];
-    for (let r = 0; r < rows.length; r++) {
-        const row = rows[r];
-        let node = root;
-        const path: string[] = [];
-        for (let level = 0; level < colFields.length; level++) {
-            const cf = colFields[level];
-            const label = formatLabel(row[cf.columnIndex], formatters.get(cf.columnIndex));
-            path.push(label);
-            let child = node.childMap.get(label);
-            if (!child) {
-                child = newColNode(label, level, path.slice());
-                node.childMap.set(label, child);
-                node.children.push(child);
-            }
-            node = child;
-        }
+function pivotPathKey(path: string[]): string {
+    return "c:" + path.join(PATH_SEP);
+}
+
+/** Compose the stable leaf-column id from a column descriptor + measure slot. */
+function colIdFor(info: ColLeafInfo, valueSlotIndex: number): string {
+    if (info.isColGrandTotal) {
+        return leafColId(GRANDTOTAL_TOKEN, valueSlotIndex);
+    }
+    if (info.isColSubtotal) {
+        return leafColId(pivotPathKey(info.path) + PATH_SEP + SUBTOTAL_TOKEN, valueSlotIndex);
+    }
+    if (info.path.length > 0) {
+        return leafColId(pivotPathKey(info.path), valueSlotIndex);
+    }
+    return leafColId("", valueSlotIndex);
+}
+
+function buildColumnPlan(
+    matrix: DataViewMatrix | undefined,
+    colFields: FieldMeta[],
+    valueFields: FieldMeta[]
+): ColumnPlan {
+    const colFieldCount = colFields.length;
+    const columns = matrix && matrix.columns;
+    const root = columns && columns.root;
+    const levels = (columns && columns.levels) || [];
+
+    // Formatter per column-group level (single source per level assumed).
+    const levelFormatters: (valueFormatter.IValueFormatter | undefined)[] = [];
+    for (let i = 0; i < colFieldCount; i++) {
+        const src = levels[i] && levels[i].sources && levels[i].sources[0];
+        levelFormatters.push(src ? makeFormatter(src.format != null ? String(src.format) : "") : undefined);
     }
 
-    // 2. Sort each level's children ascending by default (column header sorting
-    //    is layered on top by the renderer / sort manager).
-    const sortChildren = (node: ColTreeNode): void => {
-        node.children.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
-        node.children.forEach(sortChildren);
-    };
-    sortChildren(root);
-
-    // 3. Emit leaf columns in render order (DFS, subtotal after each parent group),
-    //    plus build the spanning header layout.
-    const leafColumns: LeafColumn[] = [];
+    const ordinalInfo: ColLeafInfo[] = [];
     const pivotRows: ColumnHeaderCell[][] = [];
-    for (let i = 0; i < colFields.length; i++) {
+    for (let i = 0; i < colFieldCount; i++) {
         pivotRows.push([]);
     }
 
-    const pathKey = (path: string[]): string => "c:" + path.join(PATH_SEP);
+    // Walk the engine column hierarchy. Group nodes sit at levels 0..colFieldCount-1;
+    // measure nodes sit at level === colFieldCount and are the DFS leaves whose
+    // ordinal position matches the keys in each row node's `values` map.
+    const walk = (
+        node: DataViewMatrixNode,
+        path: string[],
+        subtotal: boolean,
+        grandTotal: boolean,
+        parentIsRoot: boolean
+    ): void => {
+        const children = node.children || [];
+        for (let i = 0; i < children.length; i++) {
+            const child = children[i];
+            const childLevel = child.level != null ? child.level : path.length;
+            const isMeasureLeaf = childLevel >= colFieldCount || !child.children || child.children.length === 0;
 
-    const emitValueLeaves = (node: ColTreeNode): void => {
-        valueFields.forEach((vf) => {
-            leafColumns.push({
-                id: leafColId(pathKey(node.path), vf.slotIndex),
-                valueSlotIndex: vf.slotIndex,
-                pivotPath: node.path.slice(),
-                isColSubtotal: false,
-                isColGrandTotal: false
-            });
-        });
-    };
-
-    const emitSubtotalLeaves = (node: ColTreeNode): void => {
-        valueFields.forEach((vf) => {
-            leafColumns.push({
-                id: leafColId(pathKey(node.path) + PATH_SEP + SUBTOTAL_TOKEN, vf.slotIndex),
-                valueSlotIndex: vf.slotIndex,
-                pivotPath: node.path.slice(),
-                isColSubtotal: true,
-                isColGrandTotal: false
-            });
-        });
-    };
-
-    // Record the leaf-span for header cells as we go.
-    const headerCellSpans: { cell: ColumnHeaderCell; startLeaf: number }[] = [];
-
-    const recurse = (node: ColTreeNode): void => {
-        node.children.forEach((child) => {
-            const startLeaf = leafColumns.length;
-            if (child.level === lastColLevel) {
-                emitValueLeaves(child);
-            } else {
-                recurse(child);
-                if (settings.subtotals.columnSubtotals) {
-                    emitSubtotalLeaves(child);
-                }
+            if (isMeasureLeaf && childLevel >= colFieldCount) {
+                // A measure leaf — one DFS ordinal, inheriting the parent's descriptor.
+                ordinalInfo.push({ path: path.slice(), isColSubtotal: subtotal, isColGrandTotal: grandTotal });
+                continue;
             }
-            const span = leafColumns.length - startLeaf;
-            if (span > 0) {
+
+            // A column-group node (or, defensively, a leaf when there are no measures).
+            const childSubtotal = subtotal || !!child.isSubtotal;
+            // A subtotal directly under root spans every column => grand-total column.
+            const childGrandTotal = grandTotal || (!!child.isSubtotal && parentIsRoot);
+            const label = child.isSubtotal
+                ? ""
+                : formatLabel(matrixNodeRaw(child), levelFormatters[childLevel]);
+            const childPath = child.isSubtotal ? path.slice() : path.concat(label);
+
+            const startLeaf = ordinalInfo.length;
+            walk(child, childPath, childSubtotal, childGrandTotal, false);
+            const span = ordinalInfo.length - startLeaf;
+
+            if (span > 0 && childLevel < colFieldCount) {
                 const cell: ColumnHeaderCell = {
-                    label: child.label,
+                    label: child.isSubtotal ? "" : label,
                     span,
-                    level: child.level,
-                    isSubtotal: false,
-                    isGrandTotal: false
+                    level: childLevel,
+                    isSubtotal: !!child.isSubtotal && !childGrandTotal,
+                    isGrandTotal: childGrandTotal
                 };
-                pivotRows[child.level].push(cell);
-                headerCellSpans.push({ cell, startLeaf });
+                pivotRows[childLevel].push(cell);
             }
-        });
+        }
     };
 
-    recurse(root);
+    if (root) {
+        walk(root, [], false, false, true);
+    }
 
-    // 4. Grand total columns at the far right.
-    if (settings.subtotals.grandTotalColumn) {
+    // Build the leaf columns (visible value fields, in config order) per distinct
+    // column position, preserving DFS order.
+    const leafColumns: LeafColumn[] = [];
+    if (colFieldCount === 0) {
+        // Non-pivot: one leaf column per visible value field.
         valueFields.forEach((vf) => {
             leafColumns.push({
-                id: leafColId(GRANDTOTAL_TOKEN, vf.slotIndex),
+                id: leafColId("", vf.slotIndex),
                 valueSlotIndex: vf.slotIndex,
                 pivotPath: [],
                 isColSubtotal: false,
-                isColGrandTotal: true
+                isColGrandTotal: false
+            });
+        });
+    } else {
+        const seen = new Set<string>();
+        ordinalInfo.forEach((info) => {
+            const posKey =
+                (info.isColGrandTotal ? "G" : info.isColSubtotal ? "S" : "N") + "|" + info.path.join(PATH_SEP);
+            if (seen.has(posKey)) {
+                return;
+            }
+            seen.add(posKey);
+            valueFields.forEach((vf) => {
+                leafColumns.push({
+                    id: colIdFor(info, vf.slotIndex),
+                    valueSlotIndex: vf.slotIndex,
+                    pivotPath: info.path.slice(),
+                    isColSubtotal: info.isColSubtotal,
+                    isColGrandTotal: info.isColGrandTotal
+                });
             });
         });
     }
 
-    const columnHeader: ColumnHeaderLayout = { pivotRows, leafRow: leafColumns };
-
-    // 5. Cache of contributing column ids per row column-path.
-    const cache = new Map<string, string[]>();
-    const contributingColumnIds = (colPath: string[], valueSlotIndex: number): string[] => {
-        const cacheKey = colPath.join(PATH_SEP) + ID_SEP + valueSlotIndex;
-        const cached = cache.get(cacheKey);
-        if (cached) {
-            return cached;
-        }
-        const ids: string[] = [];
-        // Exact leaf.
-        ids.push(leafColId(pathKey(colPath), valueSlotIndex));
-        // Ancestor subtotals (prefixes shorter than the full path).
-        if (settings.subtotals.columnSubtotals) {
-            for (let k = 1; k < colPath.length; k++) {
-                const prefix = colPath.slice(0, k);
-                ids.push(leafColId(pathKey(prefix) + PATH_SEP + SUBTOTAL_TOKEN, valueSlotIndex));
-            }
-        }
-        // Grand total column.
-        if (settings.subtotals.grandTotalColumn) {
-            ids.push(leafColId(GRANDTOTAL_TOKEN, valueSlotIndex));
-        }
-        cache.set(cacheKey, ids);
-        return ids;
+    return {
+        leafColumns,
+        columnHeader: { pivotRows, leafRow: leafColumns },
+        ordinalInfo
     };
-
-    return { leafColumns, columnHeader, contributingColumnIds };
 }
 
 // ---------------------------------------------------------------------------
-// Row tree construction + aggregation.
+// Row tree construction (direct walk of the matrix rows hierarchy).
 // ---------------------------------------------------------------------------
+
+/** The raw group value of a matrix node (levelValues preferred over deprecated value). */
+function matrixNodeRaw(node: DataViewMatrixNode): PrimitiveValue | null {
+    if (node.levelValues && node.levelValues.length > 0 && node.levelValues[0].value != null) {
+        return node.levelValues[0].value;
+    }
+    return node.value != null ? node.value : null;
+}
 
 function newNode(
     key: string,
@@ -466,45 +458,15 @@ function newNode(
         isGrandTotal: false,
         values: {},
         rowIndices: [],
-        parent,
-        _childMap: new Map<string, RowTreeNode>()
+        parent
     };
 }
 
-function addInto(target: { [k: string]: number | null }, id: string, value: number | null): void {
-    if (value === null) {
-        // Preserve a null slot only if nothing else has written a number yet.
-        if (!(id in target)) {
-            target[id] = null;
-        }
-        return;
-    }
-    const existing = target[id];
-    target[id] = (existing === null || existing === undefined ? 0 : existing) + value;
-}
-
-/** Roll child values up into parents (post-order). */
-function rollUp(node: RowTreeNode): void {
-    if (node.isLeaf) {
-        return;
-    }
-    node.children.forEach((child) => {
-        rollUp(child);
-        for (const id in child.values) {
-            addInto(node.values, id, child.values[id]);
-        }
-    });
-}
-
-/** Strip transient construction state. */
-function finalize(node: RowTreeNode): void {
-    node._childMap = undefined;
-    node.children.forEach(finalize);
-}
-
 /**
- * Collect every underlying data row index beneath a node (used for selecting a
- * whole group). Leaf nodes carry their own indices; groups gather descendants.
+ * Collect underlying data row indices beneath a node. Retained for API
+ * compatibility with the selection manager; matrix nodes no longer expose flat
+ * row indices, so this returns an empty set until selection is re-keyed onto
+ * matrix identities (Phase 2).
  */
 export function collectRowIndices(node: RowTreeNode): number[] {
     if (node.isLeaf) {
@@ -537,58 +499,53 @@ export function transform(
     activeValueFields: FieldMeta[],
     activeColFields: FieldMeta[],
     settings: VisualSettings,
-    selectionFactory: SelectionIdFactory
+    _selectionFactory: SelectionIdFactory
 ): TransformResult {
-    const table: DataViewTable | undefined = dataView && dataView.table;
-    const rows = (table && table.rows) || [];
+    const matrix: DataViewMatrix | undefined = dataView && dataView.matrix;
     const isPivot = activeColFields.length > 0;
     const hasRowFields = activeRowFields.length > 0;
 
-    const plan: ColumnPlan = isPivot
-        ? buildPivotPlan(table as DataViewTable, activeColFields, activeValueFields, settings)
-        : buildNonPivotPlan(activeValueFields);
+    const plan = buildColumnPlan(matrix, activeColFields, activeValueFields);
 
-    const rowFormatters = buildFormatters(activeRowFields);
-    const colFormatters = buildFormatters(activeColFields);
-
-    const roots: RowTreeNode[] = [];
-    const rootMap = new Map<string, RowTreeNode>();
-
-    // Grand total node always accumulates everything (rendered only if enabled).
-    const grandTotal: RowTreeNode = newNode("__grandTotal__", "Grand Total", null, -1, undefined);
-    grandTotal.isGrandTotal = true;
-
-    const accumulateRow = (leaf: RowTreeNode, rowIndex: number): void => {
-        const row = rows[rowIndex];
-        // Determine the column path for this data row (pivot mode).
-        let colPath: string[] = [];
-        if (isPivot) {
-            colPath = activeColFields.map((cf) =>
-                formatLabel(row[cf.columnIndex], colFormatters.get(cf.columnIndex))
-            );
+    // Read a matrix node's intersection values into our keyed value map. The keys
+    // of node.values are the DFS ordinals of the column-hierarchy leaves; each
+    // cell's valueSourceIndex selects the measure slot.
+    const readNodeValues = (node: DataViewMatrixNode | undefined): { [id: string]: CellValue } => {
+        const out: { [id: string]: CellValue } = {};
+        const mv = node && node.values;
+        if (!mv) {
+            return out;
         }
-        activeValueFields.forEach((vf) => {
-            const value = toNumber(row[vf.columnIndex]);
-            const ids = plan.contributingColumnIds(colPath, vf.slotIndex);
-            for (let i = 0; i < ids.length; i++) {
-                addInto(leaf.values, ids[i], value);
-            }
-        });
+        for (const k in mv) {
+            const cell = mv[k];
+            const info = plan.ordinalInfo[Number(k)];
+            const descriptor: ColLeafInfo = info || { path: [], isColSubtotal: false, isColGrandTotal: false };
+            const measureSlot = cell.valueSourceIndex != null ? cell.valueSourceIndex : 0;
+            out[colIdFor(descriptor, measureSlot)] = normalizeCell(cell.value);
+        }
+        return out;
     };
 
-    if (!hasRowFields) {
-        // No row grouping: everything aggregates into a single (grand total) row.
+    // Grand total: the root's own values, or its subtotal child when present.
+    const grandTotal: RowTreeNode = newNode("__grandTotal__", "Grand Total", null, -1, undefined);
+    grandTotal.isGrandTotal = true;
+    const rowRoot: DataViewMatrixNode | undefined = matrix && matrix.rows && matrix.rows.root;
+    if (rowRoot) {
+        const rootChildren = rowRoot.children || [];
+        const rootSubtotal = rootChildren.filter((c) => c.isSubtotal)[0];
+        const gtValues = readNodeValues(rootSubtotal || rowRoot);
+        grandTotal.values = gtValues;
+        grandTotal.matrixNode = rootSubtotal || rowRoot;
+        grandTotal.identity = (rootSubtotal || rowRoot).identity;
+    }
+
+    if (!hasRowFields || !rowRoot) {
+        // No row grouping: the whole grid is a single (grand total) row.
         const synthetic = newNode("__all__", settings.subtotals.labelText || "Total", null, 0, undefined);
         synthetic.isLeaf = true;
-        for (let r = 0; r < rows.length; r++) {
-            synthetic.rowIndices.push(r);
-            accumulateRow(synthetic, r);
-        }
-        // Mirror values onto the grand total node.
-        for (const id in synthetic.values) {
-            grandTotal.values[id] = synthetic.values[id];
-        }
-        finalize(synthetic);
+        synthetic.values = grandTotal.values;
+        synthetic.matrixNode = grandTotal.matrixNode;
+        synthetic.identity = grandTotal.identity;
         return {
             rootNodes: [],
             grandTotal,
@@ -597,71 +554,56 @@ export function transform(
             activeRowFields,
             activeValueFields,
             activeColFields,
-            rowCount: rows.length,
+            rowCount: 0,
             hasRowFields: false,
             isPivot
         };
     }
 
-    const lastRowLevel = activeRowFields.length - 1;
-
-    for (let r = 0; r < rows.length; r++) {
-        const row = rows[r];
-        let list = roots;
-        let map = rootMap;
-        let parent: RowTreeNode | undefined = undefined;
-        let pathKey = "";
-        let node: RowTreeNode | undefined = undefined;
-
-        for (let level = 0; level <= lastRowLevel; level++) {
-            const rf = activeRowFields[level];
-            const raw = row[rf.columnIndex];
-            const label = formatLabel(raw, rowFormatters.get(rf.columnIndex));
-            pathKey += PATH_SEP + label;
-
-            let child = map.get(label);
-            if (!child) {
-                child = newNode(pathKey, label, raw, level, parent);
-                map.set(label, child);
-                list.push(child);
-            }
-            node = child;
-            parent = child;
-            list = child.children;
-            map = child._childMap as Map<string, RowTreeNode>;
-
-            if (level === lastRowLevel) {
-                child.isLeaf = true;
-                child.rowIndices.push(r);
-            }
-        }
-
-        if (node) {
-            accumulateRow(node, r);
-        }
-    }
-
-    // Roll subtotals up the row hierarchy.
-    roots.forEach((root) => {
-        rollUp(root);
-        for (const id in root.values) {
-            addInto(grandTotal.values, id, root.values[id]);
-        }
+    // Row-group level formatters (single source per level).
+    const rowLevels = (matrix && matrix.rows && matrix.rows.levels) || [];
+    const rowLevelFormatters: (valueFormatter.IValueFormatter | undefined)[] = rowLevels.map((lvl) => {
+        const src = lvl.sources && lvl.sources[0];
+        return src ? makeFormatter(src.format != null ? String(src.format) : "") : undefined;
     });
 
-    roots.forEach(finalize);
+    const lastRowLevel = activeRowFields.length - 1;
+    let leafCount = 0;
 
-    // Pre-build selection ids for leaf nodes lazily via the factory on demand
-    // (renderer requests node.selectionId; we attach a getter-like helper here).
-    // We attach selection ids eagerly only for leaves to keep behaviour simple.
-    const attachSelection = (node: RowTreeNode): void => {
+    const buildNode = (mnode: DataViewMatrixNode, parent: RowTreeNode | undefined): RowTreeNode => {
+        const level = mnode.level != null ? mnode.level : (parent ? parent.level + 1 : 0);
+        const raw = matrixNodeRaw(mnode);
+        const label = formatLabel(raw, rowLevelFormatters[level]);
+        // Stable key = serialized level-value path (unique across siblings).
+        const key = (parent ? parent.key : "") + PATH_SEP + label + ID_SEP + level;
+        const node = newNode(key, label, raw, level, parent);
+        node.identity = mnode.identity;
+        node.matrixNode = mnode;
+        node.isCollapsed = mnode.isCollapsed;
+
+        const children = mnode.children || [];
+        const realChildren = children.filter((c) => !c.isSubtotal);
+        const subtotalChild = children.filter((c) => c.isSubtotal)[0];
+
+        node.isLeaf = level >= lastRowLevel;
         if (node.isLeaf) {
-            node.selectionId = selectionFactory(node.rowIndices);
+            node.values = readNodeValues(mnode);
+            leafCount++;
         } else {
-            node.children.forEach(attachSelection);
+            // Group header shows the engine-computed aggregate carried on the
+            // matching subtotal node (true-scope value, NOT a sum of children).
+            node.values = subtotalChild ? readNodeValues(subtotalChild) : readNodeValues(mnode);
+            realChildren.forEach((child) => {
+                node.children.push(buildNode(child, node));
+            });
         }
+        return node;
     };
-    roots.forEach(attachSelection);
+
+    const roots: RowTreeNode[] = [];
+    (rowRoot.children || [])
+        .filter((c) => !c.isSubtotal)
+        .forEach((c) => roots.push(buildNode(c, undefined)));
 
     return {
         rootNodes: roots,
@@ -671,7 +613,7 @@ export function transform(
         activeRowFields,
         activeValueFields,
         activeColFields,
-        rowCount: rows.length,
+        rowCount: leafCount,
         hasRowFields: true,
         isPivot
     };

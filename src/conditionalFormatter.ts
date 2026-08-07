@@ -76,7 +76,7 @@ export function computeDomains(
         for (let j = 0; j < relevant.length; j++) {
             const col = relevant[j];
             const v = values[col.id];
-            if (v === null || v === undefined || isNaN(v)) {
+            if (v === null || v === undefined || typeof v !== "number" || isNaN(v)) {
                 continue;
             }
             const d = domains.get(col.id) as Domain;
@@ -108,7 +108,7 @@ export class ConditionalFormatter {
      * applies. `isTotalRow` cells are formatted only when applyToTotals is set.
      */
     public format(
-        value: number | null,
+        value: number | string | null,
         cf: CFSettings,
         domain: Domain | undefined,
         isTotalRow: boolean
@@ -119,7 +119,9 @@ export class ConditionalFormatter {
         if (isTotalRow && !cf.applyToTotals) {
             return null;
         }
-        if (value === null || value === undefined || isNaN(value)) {
+        // Text-valued measures carry no numeric CF (color scale / data bar / rules
+        // all operate on numbers); skip them.
+        if (value === null || value === undefined || typeof value !== "number" || isNaN(value)) {
             return null;
         }
 

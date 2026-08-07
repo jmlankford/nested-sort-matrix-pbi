@@ -253,7 +253,10 @@ export class SortManager {
 // Comparison primitives.
 // ---------------------------------------------------------------------------
 
-function compareNullableNumber(a: number | null | undefined, b: number | null | undefined): number {
+function compareNullableNumber(
+    a: number | string | null | undefined,
+    b: number | string | null | undefined
+): number {
     const an = a === null || a === undefined;
     const bn = b === null || b === undefined;
     if (an && bn) {
@@ -265,7 +268,11 @@ function compareNullableNumber(a: number | null | undefined, b: number | null | 
     if (bn) {
         return -1;
     }
-    return (a as number) - (b as number);
+    // Both numbers: numeric compare. Otherwise (text measures) compare lexically.
+    if (typeof a === "number" && typeof b === "number") {
+        return a - b;
+    }
+    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
 }
 
 function comparePrimitive(

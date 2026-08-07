@@ -100,7 +100,7 @@ export interface RenderInput {
     onColumnWidthsChanged: (widths: ColumnWidth[]) => void;
 }
 
-type ValueFormatFn = (value: number | null) => string;
+type ValueFormatFn = (value: number | string | null) => string;
 
 export class Renderer {
     private readonly scrollEl: HTMLElement;
@@ -442,8 +442,15 @@ export class Renderer {
         const formatter = valueFormatter.create(opts);
         const prefix = vfs.prefix || "";
         const suffix = vfs.suffix || "";
-        return (value: number | null): string => {
-            if (value === null || value === undefined || isNaN(value)) {
+        return (value: number | string | null): string => {
+            if (value === null || value === undefined) {
+                return "";
+            }
+            // Text-valued measures pass through untouched (no numeric formatting).
+            if (typeof value === "string") {
+                return value;
+            }
+            if (isNaN(value)) {
                 return "";
             }
             return prefix + formatter.format(value) + suffix;
