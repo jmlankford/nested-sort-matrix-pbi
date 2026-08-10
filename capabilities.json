@@ -37,13 +37,30 @@
 
   "subtotals": {
     "matrix": {
-      "rowSubtotals": { "defaultValue": true },
-      "columnSubtotals": { "defaultValue": true },
-      "levelSubtotalEnabled": { "defaultValue": true }
+      "rowSubtotals": {
+        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "rowSubtotals" },
+        "defaultValue": true
+      },
+      "columnSubtotals": {
+        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "columnSubtotals" },
+        "defaultValue": true
+      },
+      "levelSubtotalEnabled": {
+        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "perLevel" },
+        "defaultValue": true
+      }
     }
   },
 
   "objects": {
+    "querySubtotals": {
+      "displayName": "Query Subtotals (internal)",
+      "properties": {
+        "rowSubtotals": { "displayName": "Row subtotals", "type": { "bool": true } },
+        "columnSubtotals": { "displayName": "Column subtotals", "type": { "bool": true } },
+        "perLevel": { "displayName": "Per level", "type": { "bool": true } }
+      }
+    },
     "general": {
       "displayName": "General",
       "properties": {
