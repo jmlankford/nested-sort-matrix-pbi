@@ -19,6 +19,8 @@ export interface StatusBarState {
     sortText: string;
     rowCount: number;
     allExpanded: boolean;
+    /** TEMP: matrix-walk diagnostics string, shown at the right side. */
+    debug?: string;
 }
 
 const BAR_HEIGHT = 24;
@@ -29,6 +31,7 @@ export class StatusBar {
     private readonly expandBtn: HTMLElement;
     private readonly sortLabel: HTMLElement;
     private readonly rowCountLabel: HTMLElement;
+    private readonly debugLabel: HTMLElement;
     private allExpanded = false;
     private visible = true;
 
@@ -73,8 +76,14 @@ export class StatusBar {
 
         const right = document.createElement("div");
         right.className = "nsm-statusbar-right";
+        // TEMP diagnostics label, sits to the left of the row count on the right side.
+        this.debugLabel = document.createElement("span");
+        this.debugLabel.className = "nsm-statusbar-debug";
+        this.debugLabel.style.marginRight = "12px";
+        this.debugLabel.style.opacity = "0.85";
         this.rowCountLabel = document.createElement("span");
         this.rowCountLabel.className = "nsm-statusbar-rowcount";
+        right.appendChild(this.debugLabel);
         right.appendChild(this.rowCountLabel);
 
         this.root.appendChild(left);
@@ -106,6 +115,10 @@ export class StatusBar {
         }
 
         this.rowCountLabel.textContent = formatCount(state.rowCount) + " rows";
+
+        // TEMP diagnostics.
+        this.debugLabel.textContent = state.debug || "";
+        this.debugLabel.title = state.debug || "";
     }
 
     public destroy(): void {

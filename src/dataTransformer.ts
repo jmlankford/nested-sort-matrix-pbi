@@ -149,6 +149,8 @@ export interface TransformResult {
     rowCount: number;
     hasRowFields: boolean;
     isPivot: boolean;
+    /** TEMP: matrix-walk diagnostics rendered in the status bar. */
+    debug: string;
 }
 
 /**
@@ -539,6 +541,34 @@ export function transform(
         grandTotal.identity = (rootSubtotal || rowRoot).identity;
     }
 
+    // TEMP diagnostics: walk the raw matrix rows tree (including subtotal nodes)
+    // and tally total nodes, subtotal nodes, and a per-level histogram.
+    let diagTotal = 0;
+    let diagSub = 0;
+    const diagPerLevel: number[] = [];
+    const diagWalk = (mnode: DataViewMatrixNode): void => {
+        const kids = mnode.children || [];
+        for (let i = 0; i < kids.length; i++) {
+            const child = kids[i];
+            diagTotal++;
+            if (child.isSubtotal) {
+                diagSub++;
+            }
+            const lvl = child.level != null ? child.level : 0;
+            diagPerLevel[lvl] = (diagPerLevel[lvl] || 0) + 1;
+            diagWalk(child);
+        }
+    };
+    if (rowRoot) {
+        diagWalk(rowRoot);
+    }
+    const diagHisto = diagPerLevel
+        .map((c, i) => `L${i}:${c || 0}`)
+        .join(" ");
+    const debug = `DBG nodes:${diagTotal} sub:${diagSub} rf:${activeRowFields.length}${
+        diagHisto ? " " + diagHisto : ""
+    }`;
+
     if (!hasRowFields || !rowRoot) {
         // No row grouping: the whole grid is a single (grand total) row.
         const synthetic = newNode("__all__", settings.subtotals.labelText || "Total", null, 0, undefined);
@@ -556,7 +586,8 @@ export function transform(
             activeColFields,
             rowCount: 0,
             hasRowFields: false,
-            isPivot
+            isPivot,
+            debug
         };
     }
 
@@ -615,6 +646,7 @@ export function transform(
         activeColFields,
         rowCount: leafCount,
         hasRowFields: true,
-        isPivot
+        isPivot,
+        debug
     };
 }

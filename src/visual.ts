@@ -316,7 +316,8 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: result.rowCount,
-            allExpanded: this.allGroupKeys.length > 0 && this.expanded.size >= this.allGroupKeys.length
+            allExpanded: this.allGroupKeys.length > 0 && this.expanded.size >= this.allGroupKeys.length,
+            debug: result.debug
         });
     }
 
