@@ -41,12 +41,20 @@
         "propertyIdentifier": { "objectName": "subtotals", "propertyName": "rowSubtotals" },
         "defaultValue": true
       },
+      "rowSubtotalsPerLevel": {
+        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "perRowLevel" },
+        "defaultValue": false
+      },
       "columnSubtotals": {
         "propertyIdentifier": { "objectName": "subtotals", "propertyName": "columnSubtotals" },
         "defaultValue": true
       },
+      "columnSubtotalsPerLevel": {
+        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "perColumnLevel" },
+        "defaultValue": false
+      },
       "levelSubtotalEnabled": {
-        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "rowSubtotals" },
+        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "levelEnabled" },
         "defaultValue": true
       }
     }
@@ -210,6 +218,8 @@
       "displayName": "Subtotals & Totals",
       "properties": {
         "rowSubtotals": { "displayName": "Row subtotals", "type": { "bool": true } },
+        "perRowLevel": { "displayName": "Per row level", "type": { "bool": true } },
+        "perColumnLevel": { "displayName": "Per column level", "type": { "bool": true } },
         "levelEnabled": { "displayName": "Show subtotal", "type": { "bool": true } },
         "level1": { "displayName": "Level 1 subtotal", "type": { "bool": true } },
         "level2": { "displayName": "Level 2 subtotal", "type": { "bool": true } },
