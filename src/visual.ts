@@ -94,6 +94,9 @@ export class Visual implements IVisual {
     // Latest update artefacts (kept for callbacks & enumeration).
     private dataView: DataView | undefined = undefined;
     private lastTransform: TransformResult | null = null;
+    // TEMP: last computed matrix-walk diagnostics string, persisted across
+    // rerender paths (sort/expand/config/CF apply) that reuse a cached transform.
+    private lastDebug = "";
     private activeRowFields: FieldMeta[] = [];
     private activeValueFields: FieldMeta[] = [];
     private valueFormatBySlot = new Map<number, ValueFormatSettings>();
@@ -288,6 +291,7 @@ export class Visual implements IVisual {
             () => undefined // node-level selection ids unused; selection uses row factory
         );
         this.lastTransform = result;
+        this.lastDebug = result.debug;
 
         // Reconcile sort labels & apply nested sort.
         this.sort.reconcile(activeRowFields, result.leafColumns, (c) => this.leafLabel(c));
@@ -317,7 +321,7 @@ export class Visual implements IVisual {
             sortText: this.sort.getStackText(80),
             rowCount: result.rowCount,
             allExpanded: this.allGroupKeys.length > 0 && this.expanded.size >= this.allGroupKeys.length,
-            debug: result.debug
+            debug: this.lastDebug
         });
     }
 
@@ -462,7 +466,8 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: this.lastTransform.rowCount,
-            allExpanded: this.allGroupKeys.length > 0 && this.expanded.size >= this.allGroupKeys.length
+            allExpanded: this.allGroupKeys.length > 0 && this.expanded.size >= this.allGroupKeys.length,
+            debug: this.lastDebug
         });
     }
 
@@ -535,6 +540,7 @@ export class Visual implements IVisual {
                 () => undefined
             );
             this.lastTransform = result;
+            this.lastDebug = result.debug;
             this.sort.reconcile(activeRowFields, result.leafColumns, (c) => this.leafLabel(c));
             this.sort.applyNestedSort(result);
             this.allGroupKeys = this.collectGroupKeys(result);
