@@ -38,15 +38,15 @@
   "subtotals": {
     "matrix": {
       "rowSubtotals": {
-        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "rowSubtotals" },
+        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "rowSubtotals" },
         "defaultValue": true
       },
       "columnSubtotals": {
-        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "columnSubtotals" },
+        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "columnSubtotals" },
         "defaultValue": true
       },
       "levelSubtotalEnabled": {
-        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "perLevel" },
+        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "rowSubtotals" },
         "defaultValue": true
       }
     }
