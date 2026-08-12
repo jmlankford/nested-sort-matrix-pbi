@@ -644,26 +644,33 @@ export function transform(
         .filter((c) => !c.isSubtotal)
         .forEach((c) => roots.push(buildNode(c, undefined)));
 
-    // TEMP diagnostic (Item 0): report the first EXPANDED non-leaf node's direct
-    // children, straight from the host-delivered tree, to localize the invoice
-    // fan-out — if a customer's children are already wrong here, the host tree is
-    // wrong (request/capabilities); if correct, the bug is in our walk/render.
-    let firstExpanded: RowTreeNode | undefined;
-    const findExpanded = (node: RowTreeNode): void => {
-        if (firstExpanded) {
-            return;
+    // TEMP diagnostic (Item A): report the DEEPEST expanded non-leaf node straight
+    // from the HOST-delivered matrix tree (mnode.children), before any of our walk
+    // logic, to localize the invoice fan-out. If a customer's host children are
+    // already every invoice in the model, the host tree is wrong (request/
+    // capabilities); if they are only that customer's invoices, the bug is ours.
+    let deepestExp: { level: number; mnode: DataViewMatrixNode } | undefined;
+    const rawWalk = (mnode: DataViewMatrixNode): void => {
+        const realKids = (mnode.children || []).filter((c) => !c.isSubtotal);
+        if (realKids.length > 0 && mnode.level != null) {
+            // An expanded non-leaf group at mnode.level. Keep the first one seen at
+            // the deepest level (strict >, so earlier same-level nodes win).
+            if (!deepestExp || mnode.level > deepestExp.level) {
+                deepestExp = { level: mnode.level, mnode };
+            }
         }
-        if (!node.isLeaf && node.children.length > 0) {
-            firstExpanded = node;
-            return;
-        }
-        node.children.forEach(findExpanded);
+        (mnode.children || []).forEach(rawWalk);
     };
-    roots.forEach(findExpanded);
-    if (firstExpanded) {
-        const kids = firstExpanded.children;
-        const sample = kids.slice(0, 3).map((c) => c.label).join(",");
-        debug += ` | exp:${firstExpanded.label} kids:${kids.length} [${sample}]`;
+    rawWalk(rowRoot);
+    if (deepestExp) {
+        const dl = deepestExp.level;
+        const parentLabel = formatLabel(matrixNodeRaw(deepestExp.mnode), rowLevelFormatters[dl]);
+        const realKids = (deepestExp.mnode.children || []).filter((c) => !c.isSubtotal);
+        const sample = realKids
+            .slice(0, 3)
+            .map((c) => formatLabel(matrixNodeRaw(c), rowLevelFormatters[c.level != null ? c.level : dl + 1]))
+            .join(",");
+        debug += ` | exp:L${dl}:${parentLabel} kids:${realKids.length} [${sample}]`;
     }
 
     return {

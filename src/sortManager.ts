@@ -55,6 +55,21 @@ export class SortManager {
         return this.stack.length === 0;
     }
 
+    /** TEMP: compact sort-state token for the status-bar DBG readout (Item B). */
+    public getDebugToken(): string {
+        if (this.stack.length === 0) {
+            return "srt:-";
+        }
+        const parts = this.stack.map((e) =>
+            e.kind === "value" ? `v${e.leafColId}:${e.direction}` : `r${e.level}:${e.direction}`
+        );
+        let s = parts.join(",");
+        if (s.length > 40) {
+            s = s.slice(0, 40) + "…";
+        }
+        return "srt:" + s;
+    }
+
     // -----------------------------------------------------------------------
     // Toggle handlers (called from header clicks).
     // -----------------------------------------------------------------------
@@ -230,21 +245,26 @@ export class SortManager {
         const leafById = new Map<string, LeafColumn>();
         leafColumns.forEach((c) => leafById.set(c.id, c));
 
-        this.stack = this.stack.filter((e) => {
+        // Refresh labels for entries whose target is currently present. Entries
+        // whose level/column is only TEMPORARILY absent are KEPT, not dropped: a
+        // collapsed hierarchy projects fewer row levels, so dropping a deeper
+        // row-field sort here caused the sort to silently die across expand/collapse
+        // round-trips (Item B). A kept-but-absent entry harmlessly no-ops in
+        // sortSiblings (missing values compare equal / no siblings at that level)
+        // and re-applies when the level returns. A genuine rebind is a schema change
+        // that clears the whole stack via reset() before this runs.
+        this.stack.forEach((e) => {
             if (e.kind === "rowField") {
                 const field = rowByLevel.get(e.level);
-                if (!field) {
-                    return false;
+                if (field) {
+                    e.label = field.displayName;
                 }
-                e.label = field.displayName;
-                return true;
+            } else {
+                const col = leafById.get(e.leafColId);
+                if (col) {
+                    e.label = leafLabel(col);
+                }
             }
-            const col = leafById.get(e.leafColId);
-            if (!col) {
-                return false;
-            }
-            e.label = leafLabel(col);
-            return true;
         });
     }
 }

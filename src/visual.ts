@@ -562,6 +562,9 @@ export class Visual implements IVisual {
         if (!id) {
             return;
         }
+        // Make the row the active selection first so Power BI recognizes it as a
+        // data point and offers Copy value / Copy selection (not just "Visual").
+        this.selection.selectForContextMenu(node);
         try {
             void this.hostSelectionManager.showContextMenu(id, { x, y }, "rowFields");
         } catch {
@@ -1038,9 +1041,14 @@ export class Visual implements IVisual {
     // Helpers.
     // -----------------------------------------------------------------------
 
-    /** TEMP: combine the transform diagnostics with the schema-change token. */
+    /** TEMP: combine transform diagnostics with the schema-change + sort tokens. */
     private statusDebug(): string {
-        return this.diagSchema ? this.lastDebug + " " + this.diagSchema : this.lastDebug;
+        const parts = [this.lastDebug];
+        if (this.diagSchema) {
+            parts.push(this.diagSchema);
+        }
+        parts.push(this.sort.getDebugToken());
+        return parts.join(" ");
     }
 
     private leafLabel(col: LeafColumn): string {
