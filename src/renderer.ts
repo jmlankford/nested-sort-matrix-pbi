@@ -75,10 +75,21 @@ export interface DisplayRow {
     selectable: boolean;
 }
 
+/** Anchor for preserving scroll position across expand/collapse re-renders. */
+export interface ScrollAnchor {
+    /** Node key chain of the topmost visible row, deepest-first (self, parent, ...). */
+    keys: string[];
+    /** Sub-row pixel offset of the anchor row above the viewport top. */
+    delta: number;
+    /** Raw scrollTop fallback if no anchor key survives. */
+    scrollTop: number;
+}
+
+export type LevelExpandState = "expand" | "collapse" | "none";
+
 export interface RenderInput {
     transform: TransformResult;
     settings: VisualSettings;
-    expanded: Set<string>;
     theme: ThemeColors;
     sort: SortManager;
     selection: VisualSelectionManager;
@@ -90,6 +101,10 @@ export interface RenderInput {
     onValueSort: (leafColId: string, label: string) => void;
     onColumnSort: () => void;
     onToggleExpand: (node: RowTreeNode) => void;
+    /** Toggle expand/collapse of an ENTIRE hierarchy level (row-field header control). */
+    onToggleLevel: (level: number) => void;
+    /** Aggregate expand/collapse state of a level, for the header control's icon. */
+    levelExpandState: (level: number) => LevelExpandState;
     onRowClick: (node: RowTreeNode, mods: ClickModifiers) => void;
     onEmptyClick: () => void;
     /** Right-click on a value column header opens the in-visual CF panel. */
@@ -111,6 +126,8 @@ export class Renderer {
 
     // Per-render state captured for the recycled-row binder.
     private current: RenderInput | null = null;
+    /** The flattened display rows of the most recent render (for scroll anchoring). */
+    private lastDisplayRows: DisplayRow[] = [];
     private leftOffsets: number[] = [];
     private rowFieldTotalWidth = 0;
     private contentWidth = 0;
@@ -220,11 +237,51 @@ export class Renderer {
         this.scroller.setContentWidth(this.contentWidth);
 
         const displayRows = this.flatten(input);
+        this.lastDisplayRows = displayRows;
         this.scroller.setItems(displayRows);
 
         // Register selectable nodes (group/leaf) in display order.
         const selectables = displayRows.filter((r) => r.selectable).map((r) => r.node);
         input.selection.setSelectables(selectables);
+    }
+
+    // -----------------------------------------------------------------------
+    // Scroll anchoring (Phase 2 Part C): keep the topmost visible node fixed in
+    // the viewport across an expand/collapse re-render, even when rows are
+    // inserted or removed above it.
+    // -----------------------------------------------------------------------
+
+    public captureAnchor(): ScrollAnchor {
+        const idx = this.scroller.getFirstVisibleIndex();
+        const rowHeight = this.scroller.getRowHeight();
+        const topOffset = this.scroller.getTopOffset();
+        const scrollTop = this.scroller.getScrollTop();
+        const delta = scrollTop - (topOffset + idx * rowHeight);
+        const row = this.lastDisplayRows[idx];
+        const keys: string[] = [];
+        let n: RowTreeNode | undefined = row ? row.node : undefined;
+        while (n) {
+            keys.push(n.key);
+            n = n.parent;
+        }
+        return { keys, delta, scrollTop };
+    }
+
+    public restoreAnchor(anchor: ScrollAnchor | null): void {
+        if (!anchor) {
+            return;
+        }
+        const rowHeight = this.scroller.getRowHeight();
+        const topOffset = this.scroller.getTopOffset();
+        for (let k = 0; k < anchor.keys.length; k++) {
+            const key = anchor.keys[k];
+            const j = this.lastDisplayRows.findIndex((r) => r.node.key === key);
+            if (j >= 0) {
+                this.scroller.setScrollTop(topOffset + j * rowHeight + anchor.delta);
+                return;
+            }
+        }
+        this.scroller.setScrollTop(anchor.scrollTop);
     }
 
     // -----------------------------------------------------------------------
@@ -536,6 +593,16 @@ export class Renderer {
 
         const mode = input.settings.rowHeaders.layoutMode;
 
+        // Native expand/collapse (Phase 2): a group's expansion is driven by the
+        // matrix node's own isCollapsed flag from the DataView, not local state.
+        //   isCollapsed === true      -> collapsed (host sent no children)
+        //   isCollapsed === false     -> expanded  (children present)
+        //   isCollapsed === undefined -> not expandable, or a fully-delivered tree
+        // A collapsed group carries no children; its own row shows the engine
+        // aggregate lifted onto node.values in the transformer.
+        const isExpandedNode = (node: RowTreeNode): boolean =>
+            node.isCollapsed === false || (node.isCollapsed === undefined && node.children.length > 0);
+
         const walk = (node: RowTreeNode): void => {
             if (node.isLeaf) {
                 rows.push({
@@ -547,26 +614,26 @@ export class Renderer {
                 });
                 return;
             }
-            const expanded = input.expanded.has(node.key);
+            const expanded = isExpandedNode(node);
             const stEnabled = subtotalOn(node.level);
 
-            // In tabular mode, group rows are suppressed — leaf rows carry the full
-            // ancestor label chain across columns, and subtotals serve as group
-            // summaries. Rendering group rows in tabular mode creates visual
-            // duplication because the group aggregate appears both in the group row
-            // and the subtotal row. Recurse into children only; still emit the
-            // subtotal so each group has its summary line.
+            // In tabular mode, group header rows are suppressed. The subtotal row
+            // doubles as the group's summary line AND the expand/collapse handle:
+            //   - collapsed group -> just its subtotal line, carrying a + control
+            //   - expanded group  -> leaf rows above, then its subtotal line with −
+            // The subtotal line is always emitted in tabular so a collapsed group
+            // remains visible and expandable.
             if (mode === "tabular") {
-                node.children.forEach(walk);
-                if (stEnabled) {
-                    rows.push({
-                        node,
-                        kind: "subtotal",
-                        level: node.level,
-                        showValues: true,
-                        selectable: false
-                    });
+                if (expanded && node.children.length > 0) {
+                    node.children.forEach(walk);
                 }
+                rows.push({
+                    node,
+                    kind: "subtotal",
+                    level: node.level,
+                    showValues: true,
+                    selectable: false
+                });
                 return;
             }
 
@@ -574,14 +641,13 @@ export class Renderer {
                 node,
                 kind: "group",
                 level: node.level,
-                // Group header rows always show their own rolled-up aggregated
-                // values (from rollUp() in dataTransformer). The subtotal row
-                // beneath an expanded group is an additive labeled row — it does
-                // not replace the group header's own value display.
+                // Group header rows show their engine-computed aggregate (lifted
+                // from the matrix subtotal node in the transformer). The subtotal
+                // row beneath an expanded group is a separate labeled summary line.
                 showValues: true,
                 selectable: true
             });
-            if (expanded) {
+            if (expanded && node.children.length > 0) {
                 node.children.forEach(walk);
                 if (stEnabled) {
                     rows.push({
@@ -651,7 +717,10 @@ export class Renderer {
                 cell.append("span").attr("class", "nsm-hlabel").text(field ? field.displayName : "");
                 // No sort handle on tabular non-frozen columns for now.
                 const cellNodeTabular = cell.node() as HTMLElement;
-                if (cellNodeTabular) this.appendResizeHandle(cellNodeTabular, -(level + 1));
+                if (cellNodeTabular) {
+                    this.appendLevelControl(cellNodeTabular, level, input);
+                    this.appendResizeHandle(cellNodeTabular, -(level + 1));
+                }
                 continue;
             }
 
@@ -685,8 +754,11 @@ export class Renderer {
                 });
             }
 
-            // Drag-to-resize handle. Row-field column k is encoded as -(k + 1).
+            // Per-level expand/collapse control (Part B), left of the label.
             const cellNode = cell.node() as HTMLElement;
+            this.appendLevelControl(cellNode, level, input);
+
+            // Drag-to-resize handle. Row-field column k is encoded as -(k + 1).
             this.appendResizeHandle(cellNode, -(level + 1));
         }
 
@@ -955,13 +1027,19 @@ export class Renderer {
         const isAncestorCell = levelOverride !== undefined && levelOverride < row.level;
         const isOwnLevelCell = !isAncestorCell;
 
-        // Expand/collapse button — only on the row's own-level group cell.
-        if (row.kind === "group" && isOwnLevelCell) {
+        // Expand/collapse button. Native EC drives state from the node's own
+        // isCollapsed flag. The control lives on the group row (compact/outline)
+        // and on the subtotal row in tabular mode (where group rows are hidden).
+        const mode = input.settings.rowHeaders.layoutMode;
+        const canToggle =
+            row.node.isCollapsed !== undefined &&
+            (row.kind === "group" || (row.kind === "subtotal" && mode === "tabular"));
+        if (canToggle && isOwnLevelCell) {
             const ec = input.settings.expandCollapse;
             if (ec.show) {
                 const btn = document.createElement("span");
                 btn.className = "nsm-expand-btn";
-                const expanded = input.expanded.has(row.node.key);
+                const expanded = row.node.isCollapsed === false;
                 btn.textContent = this.expandIcon(ec.style, expanded);
                 btn.style.fontSize = ec.buttonSize + "px";
                 btn.style.color = ec.buttonColor || input.theme.foreground;
@@ -975,7 +1053,7 @@ export class Renderer {
                 spacer.className = "nsm-chevron-spacer";
                 cell.appendChild(spacer);
             }
-        } else if (row.kind === "leaf" && isOwnLevelCell) {
+        } else if ((row.kind === "leaf" || row.kind === "group" || row.kind === "subtotal") && isOwnLevelCell) {
             const spacer = document.createElement("span");
             spacer.className = "nsm-chevron-spacer";
             cell.appendChild(spacer);
@@ -997,6 +1075,36 @@ export class Renderer {
         }
         label.title = label.textContent || "";
         cell.appendChild(label);
+    }
+
+    /**
+     * Per-level expand/collapse control for a row-field COLUMN HEADER (Part B).
+     * Clicking toggles every node at that hierarchy level via the host's
+     * entire-level expand/collapse. The icon reflects the level's aggregate state.
+     */
+    private appendLevelControl(cellNode: HTMLElement, level: number, input: RenderInput): void {
+        const ec = input.settings.expandCollapse;
+        if (!ec.show) {
+            return;
+        }
+        const state = input.levelExpandState(level);
+        if (state === "none") {
+            return;
+        }
+        const ctl = document.createElement("span");
+        ctl.className = "nsm-level-ec-btn";
+        // state "collapse" => level is fully expanded, so the action collapses it (−).
+        ctl.textContent = this.expandIcon(ec.style, state === "collapse");
+        ctl.title = state === "collapse" ? "Collapse entire level" : "Expand entire level";
+        ctl.style.cursor = "pointer";
+        ctl.style.marginRight = "4px";
+        ctl.style.fontSize = ec.buttonSize + "px";
+        ctl.style.color = ec.buttonColor || input.theme.headerForeground;
+        ctl.onclick = (e: MouseEvent) => {
+            e.stopPropagation();
+            input.onToggleLevel(level);
+        };
+        cellNode.insertBefore(ctl, cellNode.firstChild);
     }
 
     /** The expand/collapse glyph for a style + state. */

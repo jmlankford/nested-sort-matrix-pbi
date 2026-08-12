@@ -90,6 +90,23 @@ export class VirtualScroller<T> {
         return this.firstVisibleIndex;
     }
 
+    /** Current raw scrollTop of the scroll container. */
+    public getScrollTop(): number {
+        return this.container.scrollTop || 0;
+    }
+
+    /** Reserved top offset (sticky header height). */
+    public getTopOffset(): number {
+        return this.topOffset;
+    }
+
+    /** Set scrollTop directly and re-bind the visible window (scroll anchoring). */
+    public setScrollTop(px: number): void {
+        const max = Math.max(0, this.topOffset + this.items.length * this.rowHeight - (this.container.clientHeight || 0));
+        this.container.scrollTop = Math.max(0, Math.min(max, Math.floor(px)));
+        this.update();
+    }
+
     public setItems(items: T[]): void {
         this.items = items || [];
         this.updateSizerHeight();

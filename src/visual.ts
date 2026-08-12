@@ -58,7 +58,7 @@ import { SortManager } from "./sortManager";
 import { VisualSelectionManager } from "./selectionManager";
 import { StatusBar } from "./statusBar";
 import { ConfigPanel, ConfigModel, SlotEntry, ConfigRole } from "./configPanel";
-import { Renderer, RenderInput, ThemeColors, ColumnWidth } from "./renderer";
+import { Renderer, RenderInput, ThemeColors, ColumnWidth, ScrollAnchor, LevelExpandState } from "./renderer";
 import { CfPanel, CfPanelState, CfType, CfApplyTo } from "./cfPanel";
 
 interface PersistedSlot {
@@ -87,9 +87,17 @@ export class Visual implements IVisual {
 
     // Session state.
     private settings: VisualSettings = parseVisualSettings(undefined);
-    private expanded = new Set<string>();
     private config: ConfigModel = { rows: [], values: [], cols: [] };
     private schemaSignature = "";
+
+    // Native expand/collapse (Phase 2). Expansion state is owned by the host and
+    // reflected in each matrix node's isCollapsed flag — the visual keeps no local
+    // "expanded" set. bulkOp drives Expand All / Collapse All across the async,
+    // per-level host round-trips; pendingAnchor preserves scroll across toggles.
+    private bulkOp: "expand" | "collapse" | null = null;
+    private bulkGuard = 0;
+    private bulkLastLevel = -1;
+    private pendingAnchor: ScrollAnchor | null = null;
 
     // Latest update artefacts (kept for callbacks & enumeration).
     private dataView: DataView | undefined = undefined;
@@ -107,7 +115,6 @@ export class Visual implements IVisual {
      *  eventually return once the host merges the persisted objects. */
     private cfPendingConfirm = new Map<number, string>();
     private valueNameBySlot = new Map<number, string>();
-    private allGroupKeys: string[] = [];
     /** Restored/edited column widths, persisted via persistProperties (Fix 3D). */
     private columnWidths: ColumnWidth[] = [];
 
@@ -232,7 +239,8 @@ export class Visual implements IVisual {
             // Full refresh: reset volatile session state.
             this.sort.reset();
             this.selection.reset();
-            this.expanded.clear();
+            this.bulkOp = null;
+            this.pendingAnchor = null;
             this.config = this.reconcileConfig(discovered, this.parsePersisted(this.settings.configState));
         } else {
             // Cross-filter / value update: keep order/visibility/renames; just
@@ -278,9 +286,6 @@ export class Visual implements IVisual {
             this.valueNameBySlot.set(f.slotIndex, f.displayName);
         });
 
-        // Selection id factory bound to the current table.
-        this.selection.setRowIdFactory((rowIndex) => this.buildRowSelectionId(rowIndex));
-
         // Transform.
         const result = transform(
             dataView,
@@ -288,17 +293,17 @@ export class Visual implements IVisual {
             activeValueFields,
             activeColFields,
             this.settings,
-            () => undefined // node-level selection ids unused; selection uses row factory
+            () => undefined // legacy factory param; matrix selection ids attached below
         );
         this.lastTransform = result;
         this.lastDebug = result.debug;
 
+        // Attach matrix-node selection ids to leaf rows (Phase 2 Part E).
+        this.attachSelectionIds(result);
+
         // Reconcile sort labels & apply nested sort.
         this.sort.reconcile(activeRowFields, result.leafColumns, (c) => this.leafLabel(c));
         this.sort.applyNestedSort(result);
-
-        // Collect group keys for expand-all bookkeeping.
-        this.allGroupKeys = this.collectGroupKeys(result);
 
         // Layout: reserve status bar height.
         const viewportH = options.viewport.height;
@@ -315,14 +320,27 @@ export class Visual implements IVisual {
             this.renderer.scrollToTop();
         }
 
+        // Restore scroll position across an expand/collapse re-render (Part C).
+        if (this.pendingAnchor) {
+            this.renderer.restoreAnchor(this.pendingAnchor);
+            if (!this.bulkOp) {
+                this.pendingAnchor = null;
+            }
+        }
+
         // Status bar.
         this.statusBar.render({
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: result.rowCount,
-            allExpanded: this.allGroupKeys.length > 0 && this.expanded.size >= this.allGroupKeys.length,
+            allExpanded: this.computeAllExpanded(result),
             debug: this.lastDebug
         });
+
+        // Continue a bulk Expand All / Collapse All in progress (Part B global).
+        if (this.bulkOp) {
+            this.driveBulk();
+        }
     }
 
     private buildRenderInput(result: TransformResult): RenderInput {
@@ -332,7 +350,6 @@ export class Visual implements IVisual {
         return {
             transform: result,
             settings: this.settings,
-            expanded: this.expanded,
             theme,
             sort: this.sort,
             selection: this.selection,
@@ -353,6 +370,8 @@ export class Visual implements IVisual {
                 this.rerender(true);
             },
             onToggleExpand: (node) => this.toggleNode(node),
+            onToggleLevel: (level) => this.toggleLevel(level),
+            levelExpandState: (level) => this.levelExpandState(level),
             onRowClick: (node, mods) => this.selection.handleRowClick(node, mods),
             onEmptyClick: () => this.selection.clearSelection(),
             columnWidths: this.columnWidths,
@@ -466,7 +485,7 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: this.lastTransform.rowCount,
-            allExpanded: this.allGroupKeys.length > 0 && this.expanded.size >= this.allGroupKeys.length,
+            allExpanded: this.computeAllExpanded(this.lastTransform),
             debug: this.lastDebug
         });
     }
@@ -479,21 +498,258 @@ export class Visual implements IVisual {
         this.renderer.render(this.buildRenderInput(this.lastTransform));
     }
 
+    // -----------------------------------------------------------------------
+    // Native expand/collapse (Phase 2 Parts A/B).
+    // -----------------------------------------------------------------------
+
+    /**
+     * Toggle a single group node via the host expand/collapse API. The host
+     * refetches and re-delivers the DataView with the node's isCollapsed flag
+     * flipped, which drives the next render.
+     */
     private toggleNode(node: RowTreeNode): void {
-        if (this.expanded.has(node.key)) {
-            this.expanded.delete(node.key);
-        } else {
-            this.expanded.add(node.key);
+        const id = this.buildMatrixSelectionId(node);
+        if (!id) {
+            return;
         }
-        this.rerender(true);
+        this.pendingAnchor = this.renderer.captureAnchor();
+        try {
+            void this.hostSelectionManager.toggleExpandCollapse(id);
+        } catch {
+            this.pendingAnchor = null;
+        }
     }
 
-    private toggleExpandAll(expand: boolean): void {
-        this.expanded.clear();
-        if (expand) {
-            this.allGroupKeys.forEach((k) => this.expanded.add(k));
+    /** Toggle an entire hierarchy level (row-field header control, Part B). */
+    private toggleLevel(level: number): void {
+        const state = this.levelExpandState(level);
+        if (state === "none") {
+            return;
         }
-        this.rerender(true);
+        // To expand the level, pass a currently-collapsed node at that level; to
+        // collapse it, pass an expanded one, so the host toggles the intended way.
+        const wantCollapsedNode = state === "expand";
+        const node = this.findLevelNode(level, wantCollapsedNode);
+        if (!node) {
+            return;
+        }
+        const id = this.buildMatrixSelectionId(node);
+        if (!id) {
+            return;
+        }
+        this.pendingAnchor = this.renderer.captureAnchor();
+        try {
+            void this.hostSelectionManager.toggleExpandCollapse(id, true /* entireLevel */);
+        } catch {
+            this.pendingAnchor = null;
+        }
+    }
+
+    /** Expand All / Collapse All from the status bar (Part B global). */
+    private toggleExpandAll(expand: boolean): void {
+        this.pendingAnchor = this.renderer.captureAnchor();
+        this.bulkOp = expand ? "expand" : "collapse";
+        this.bulkGuard = 0;
+        this.bulkLastLevel = -1;
+        this.driveBulk();
+    }
+
+    /**
+     * Advance a bulk expand/collapse. Because entire-level toggles are async and
+     * deeper levels only materialize after their parent expands, this issues one
+     * level toggle per host round-trip and is re-entered from update() until the
+     * whole tree reaches the target state.
+     */
+    private driveBulk(): void {
+        if (!this.bulkOp || !this.lastTransform) {
+            return;
+        }
+        if (this.bulkGuard++ > 64) {
+            this.bulkOp = null;
+            this.pendingAnchor = null;
+            return;
+        }
+        const target =
+            this.bulkOp === "expand"
+                ? this.shallowestCollapsedLevel()
+                : this.deepestExpandedLevel();
+        // No progress possible, or done.
+        if (target < 0 || target === this.bulkLastLevel) {
+            this.bulkOp = null;
+            this.pendingAnchor = null;
+            return;
+        }
+        const node = this.findLevelNode(target, this.bulkOp === "expand");
+        if (!node) {
+            this.bulkOp = null;
+            this.pendingAnchor = null;
+            return;
+        }
+        const id = this.buildMatrixSelectionId(node);
+        if (!id) {
+            this.bulkOp = null;
+            this.pendingAnchor = null;
+            return;
+        }
+        this.bulkLastLevel = target;
+        try {
+            void this.hostSelectionManager.toggleExpandCollapse(id, true /* entireLevel */);
+        } catch {
+            this.bulkOp = null;
+            this.pendingAnchor = null;
+        }
+    }
+
+    // ---- Expand/collapse tree helpers ----
+
+    /** Build an ISelectionId for a matrix node by chaining withMatrixNode over
+     *  its ancestor path (root-most first), per the expand/collapse API. */
+    private buildMatrixSelectionId(node: RowTreeNode): ISelectionId | undefined {
+        const matrix = this.dataView && this.dataView.matrix;
+        if (!matrix || !matrix.rows) {
+            return undefined;
+        }
+        const levels = matrix.rows.levels;
+        const chain: RowTreeNode[] = [];
+        let n: RowTreeNode | undefined = node;
+        while (n) {
+            chain.unshift(n);
+            n = n.parent;
+        }
+        try {
+            let builder = this.host.createSelectionIdBuilder();
+            for (let i = 0; i < chain.length; i++) {
+                const mn = chain[i].matrixNode;
+                if (!mn) {
+                    return undefined;
+                }
+                builder = builder.withMatrixNode(mn, levels);
+            }
+            return builder.createSelectionId();
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** Attach a selection id to every leaf node (for cross-filter, Part E). */
+    private attachSelectionIds(result: TransformResult): void {
+        const walk = (node: RowTreeNode): void => {
+            if (node.isLeaf) {
+                node.selectionId = this.buildMatrixSelectionId(node);
+            } else {
+                node.children.forEach(walk);
+            }
+        };
+        result.rootNodes.forEach(walk);
+    }
+
+    /** True if no expandable node anywhere is still collapsed. */
+    private computeAllExpanded(result: TransformResult | null): boolean {
+        if (!result) {
+            return false;
+        }
+        let sawExpandable = false;
+        let anyCollapsed = false;
+        const walk = (node: RowTreeNode): void => {
+            if (node.isCollapsed !== undefined) {
+                sawExpandable = true;
+                if (node.isCollapsed) {
+                    anyCollapsed = true;
+                }
+            }
+            node.children.forEach(walk);
+        };
+        result.rootNodes.forEach(walk);
+        return sawExpandable && !anyCollapsed;
+    }
+
+    /** Aggregate expand/collapse state of a hierarchy level for its header control. */
+    private levelExpandState(level: number): LevelExpandState {
+        if (!this.lastTransform) {
+            return "none";
+        }
+        let present = false;
+        let anyCollapsed = false;
+        let anyExpanded = false;
+        const walk = (node: RowTreeNode): void => {
+            if (node.level === level && node.isCollapsed !== undefined) {
+                present = true;
+                if (node.isCollapsed) {
+                    anyCollapsed = true;
+                } else {
+                    anyExpanded = true;
+                }
+            }
+            if (node.level < level) {
+                node.children.forEach(walk);
+            }
+        };
+        this.lastTransform.rootNodes.forEach(walk);
+        if (!present) {
+            return "none";
+        }
+        // If any node is collapsed, offer "expand"; otherwise offer "collapse".
+        return anyCollapsed || !anyExpanded ? "expand" : "collapse";
+    }
+
+    /** Find a node at a level, preferring collapsed (or expanded) per the flag. */
+    private findLevelNode(level: number, wantCollapsed: boolean): RowTreeNode | undefined {
+        if (!this.lastTransform) {
+            return undefined;
+        }
+        let fallback: RowTreeNode | undefined;
+        let found: RowTreeNode | undefined;
+        const walk = (node: RowTreeNode): void => {
+            if (found) {
+                return;
+            }
+            if (node.level === level && node.isCollapsed !== undefined) {
+                if (!fallback) {
+                    fallback = node;
+                }
+                if (node.isCollapsed === wantCollapsed) {
+                    found = node;
+                    return;
+                }
+            }
+            if (node.level < level) {
+                node.children.forEach(walk);
+            }
+        };
+        this.lastTransform.rootNodes.forEach(walk);
+        return found || fallback;
+    }
+
+    /** Shallowest level that still has a collapsed expandable node (or -1). */
+    private shallowestCollapsedLevel(): number {
+        if (!this.lastTransform) {
+            return -1;
+        }
+        let best = -1;
+        const walk = (node: RowTreeNode): void => {
+            if (node.isCollapsed === true && (best < 0 || node.level < best)) {
+                best = node.level;
+            }
+            node.children.forEach(walk);
+        };
+        this.lastTransform.rootNodes.forEach(walk);
+        return best;
+    }
+
+    /** Deepest level that still has an expanded expandable node (or -1). */
+    private deepestExpandedLevel(): number {
+        if (!this.lastTransform) {
+            return -1;
+        }
+        let best = -1;
+        const walk = (node: RowTreeNode): void => {
+            if (node.isCollapsed === false && node.level > best) {
+                best = node.level;
+            }
+            node.children.forEach(walk);
+        };
+        this.lastTransform.rootNodes.forEach(walk);
+        return best;
     }
 
     // -----------------------------------------------------------------------
@@ -541,9 +797,9 @@ export class Visual implements IVisual {
             );
             this.lastTransform = result;
             this.lastDebug = result.debug;
+            this.attachSelectionIds(result);
             this.sort.reconcile(activeRowFields, result.leafColumns, (c) => this.leafLabel(c));
             this.sort.applyNestedSort(result);
-            this.allGroupKeys = this.collectGroupKeys(result);
             this.renderer.render(this.buildRenderInput(result));
             this.renderer.scrollToTop();
         }
@@ -747,32 +1003,6 @@ export class Visual implements IVisual {
 
     private leafLabel(col: LeafColumn): string {
         return this.valueNameBySlot.get(col.valueSlotIndex) || `Value ${col.valueSlotIndex + 1}`;
-    }
-
-    private collectGroupKeys(result: TransformResult): string[] {
-        const keys: string[] = [];
-        const walk = (node: RowTreeNode): void => {
-            if (!node.isLeaf && node.children.length > 0) {
-                keys.push(node.key);
-                node.children.forEach(walk);
-            }
-        };
-        result.rootNodes.forEach(walk);
-        return keys;
-    }
-
-    private buildRowSelectionId(rowIndex: number): ISelectionId | undefined {
-        if (!this.dataView || !this.dataView.table) {
-            return undefined;
-        }
-        try {
-            return this.host
-                .createSelectionIdBuilder()
-                .withTable(this.dataView.table, rowIndex)
-                .createSelectionId();
-        } catch {
-            return undefined;
-        }
     }
 
     // -----------------------------------------------------------------------

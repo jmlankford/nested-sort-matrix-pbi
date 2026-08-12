@@ -7,17 +7,17 @@
  * clear-on-empty-space. Cross-filter emission is gated by the format-pane
  * Cross-Filter toggle.
  *
- * Selection ids are built from Table DataView row identities. A single row node
- * may map to several underlying table rows (e.g. when column fields split a
- * row-field combination across pivot columns), so selecting a node emits the
- * selection ids for ALL of its descendant data rows.
+ * Selection ids are built from Matrix DataView node identities (Phase 2): each
+ * leaf RowTreeNode carries its own ISelectionId, built by the visual via
+ * host.createSelectionIdBuilder().withMatrixNode(...) over its ancestor chain.
+ * Selecting a leaf node emits exactly that node's selection id.
  */
 
 import powerbi from "powerbi-visuals-api";
 import ISelectionManager = powerbi.extensibility.ISelectionManager;
 import ISelectionId = powerbi.visuals.ISelectionId;
 
-import { RowTreeNode, collectRowIndices } from "./dataTransformer";
+import { RowTreeNode } from "./dataTransformer";
 
 export interface ClickModifiers {
     ctrlKey: boolean;
@@ -25,26 +25,18 @@ export interface ClickModifiers {
     shiftKey: boolean;
 }
 
-export type RowIdFactory = (rowIndex: number) => ISelectionId | undefined;
-
 export class VisualSelectionManager {
     private selected = new Set<string>();
     /** Ordered, flattened list of currently selectable row nodes (for range select). */
     private selectables: RowTreeNode[] = [];
     private keyToNode = new Map<string, RowTreeNode>();
     private lastClickedKey: string | null = null;
-    private idForRow: RowIdFactory = () => undefined;
 
     constructor(
         private readonly selectionManager: ISelectionManager,
         private readonly onChange: () => void,
         private readonly isEnabled: () => boolean
     ) {}
-
-    /** Provide the per-update row-index -> ISelectionId factory. */
-    public setRowIdFactory(factory: RowIdFactory): void {
-        this.idForRow = factory;
-    }
 
     /** Provide the ordered list of selectable nodes for the current render. */
     public setSelectables(nodes: RowTreeNode[]): void {
@@ -160,16 +152,10 @@ export class VisualSelectionManager {
         const ids: ISelectionId[] = [];
         this.selected.forEach((key) => {
             const node = this.keyToNode.get(key);
-            if (!node) {
+            if (!node || !node.selectionId) {
                 return;
             }
-            const rowIndices = collectRowIndices(node);
-            for (let i = 0; i < rowIndices.length; i++) {
-                const id = this.idForRow(rowIndices[i]);
-                if (id) {
-                    ids.push(id);
-                }
-            }
+            ids.push(node.selectionId);
         });
 
         // Replace host selection with exactly our set.

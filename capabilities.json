@@ -60,6 +60,17 @@
     }
   },
 
+  "drilldown": {
+    "roles": ["rowFields"]
+  },
+
+  "expandCollapse": {
+    "roles": ["rowFields"],
+    "addDataViewFlags": {
+      "defaultValue": true
+    }
+  },
+
   "objects": {
     "querySubtotals": {
       "displayName": "Query Subtotals (internal)",
