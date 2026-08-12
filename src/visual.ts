@@ -1052,6 +1052,7 @@ export class Visual implements IVisual {
         }
         parts.push(this.sort.getDebugToken());
         parts.push(this.sort.getSortedToken());
+        parts.push(this.sort.getKeyToken());
         return parts.join(" ");
     }
 

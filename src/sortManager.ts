@@ -47,6 +47,9 @@ export class SortManager {
     private columnDirection: SortDirection = "asc";
     /** TEMP (Item A): per-depth {sorted,changed} counts from the last sort pass. */
     private lastSortStats: { sorted: number; changed: number }[] = [];
+    /** TEMP (Item A): the sort key + first 3 resolved sibling values at depth 1. */
+    private srtkToken = "";
+    private srtkDone = false;
 
     public reset(): void {
         this.stack = [];
@@ -154,6 +157,8 @@ export class SortManager {
 
     public applyNestedSort(result: TransformResult): void {
         this.lastSortStats = [];
+        this.srtkToken = "";
+        this.srtkDone = false;
         if (!result.hasRowFields) {
             this.applyColumnOrder(result);
             return;
@@ -177,6 +182,14 @@ export class SortManager {
             parts.push(`L${i}:${s.sorted}/${s.changed}`);
         }
         return "srtd:" + parts.join(",");
+    }
+
+    /** TEMP (Item A): the depth-1 sort key + first 3 resolved sibling values,
+     *  e.g. srtk:::#::v0 vals:[1234,300,null]. Reveals whether group/collapsed nodes
+     *  resolve the same colId the sort compares against (null ⇒ key mismatch) and
+     *  whether the post-sort order is actually descending/ascending. */
+    public getKeyToken(): string {
+        return this.srtkToken || "srtk:-";
     }
 
     private sortRecursive(node: RowTreeNode): void {
@@ -222,6 +235,23 @@ export class SortManager {
             st.changed++;
         }
         this.lastSortStats[level] = st;
+
+        // TEMP (Item A): capture the first multi-sibling depth-1 array's value-sort
+        // key and its first 3 resolved (post-sort) values.
+        if (level === 1 && !this.srtkDone && siblings.length > 1) {
+            const ve = applicable.find((e) => e.kind === "value");
+            if (ve) {
+                const fmt = (v: number | string | null | undefined): string =>
+                    v === null || v === undefined
+                        ? "null"
+                        : typeof v === "string"
+                        ? `"${v}"`
+                        : String(v);
+                const vals = siblings.slice(0, 3).map((s) => fmt(s.values[ve.leafColId]));
+                this.srtkToken = `srtk:${ve.leafColId} vals:[${vals.join(",")}]`;
+                this.srtkDone = true;
+            }
+        }
     }
 
     /** Re-order leaf columns when the user flips pivot column direction. */
