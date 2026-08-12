@@ -122,7 +122,12 @@ type ValueFormatFn = (value: number | string | null) => string;
 export class Renderer {
     private readonly scrollEl: HTMLElement;
     private readonly headerEl: HTMLElement;
+    private readonly stickyEl: HTMLElement;
     private readonly scroller: VirtualScroller<DisplayRow>;
+    /** Sticky-layer scroll throttle handle + reserved-zone geometry (Item E). */
+    private stickyRaf: number | null = null;
+    private stickyReserve = 0;
+    private baseHeaderH = HEADER_ROW_HEIGHT;
 
     private readonly cf = new ConditionalFormatter();
 
@@ -159,8 +164,35 @@ export class Renderer {
         this.headerEl.className = "nsm-header";
         this.scrollEl.appendChild(this.headerEl);
 
+        // Sticky parent-row layer (Item E). A child of the scroll container that we
+        // keep at a fixed viewport offset by tracking scrollTop; it scrolls
+        // horizontally with the body (columns align) but is pinned vertically just
+        // below the header. Space for it is reserved via the scroller's top offset.
+        this.stickyEl = document.createElement("div");
+        this.stickyEl.className = "nsm-sticky-layer";
+        this.scrollEl.appendChild(this.stickyEl);
+
         this.scroller = new VirtualScroller<DisplayRow>(this.scrollEl);
         this.scroller.setRenderRow((el, item, index) => this.bindRow(el, item, index));
+
+        // Keep the sticky layer in sync while scrolling (rAF-throttled).
+        this.scrollEl.addEventListener(
+            "scroll",
+            () => {
+                if (this.stickyRaf !== null) {
+                    return;
+                }
+                this.stickyRaf = requestAnimationFrame(() => {
+                    this.stickyRaf = null;
+                    try {
+                        this.updateSticky();
+                    } catch {
+                        /* sticky layer is best-effort; never break the grid */
+                    }
+                });
+            },
+            { passive: true }
+        );
 
         // Empty-space click clears selection.
         this.scrollEl.addEventListener("click", (e) => {
@@ -235,16 +267,123 @@ export class Renderer {
         // the element hasn't been laid out yet (measured height of 0).
         const measuredHeader = this.headerEl.getBoundingClientRect().height;
         const effectiveHeaderHeight = measuredHeader > 0 ? measuredHeader : this.headerHeight;
-        this.scroller.setTopOffset(effectiveHeaderHeight);
-        this.scroller.setContentWidth(this.contentWidth);
+        this.baseHeaderH = effectiveHeaderHeight;
 
         const displayRows = this.flatten(input);
         this.lastDisplayRows = displayRows;
+
+        // Item E: reserve a fixed zone below the header for pinned parent rows,
+        // sized to the deepest nesting currently displayed (0 when flat/collapsed,
+        // so no wasted space). Body rows start below the reserved zone; the sticky
+        // layer fills it with the current row's ancestor group headers.
+        let maxLevel = 0;
+        for (let i = 0; i < displayRows.length; i++) {
+            if (displayRows[i].level > maxLevel) {
+                maxLevel = displayRows[i].level;
+            }
+        }
+        // Always-on for this first cut (a format-pane toggle can be added later).
+        this.stickyReserve = Math.min(maxLevel, 10);
+        this.scroller.setTopOffset(effectiveHeaderHeight + this.stickyReserve * rowHeight);
+        this.scroller.setContentWidth(this.contentWidth);
+
         this.scroller.setItems(displayRows);
 
         // Register selectable nodes (group/leaf) in display order.
         const selectables = displayRows.filter((r) => r.selectable).map((r) => r.node);
         input.selection.setSelectables(selectables);
+
+        // Paint the initial sticky layer for the current scroll position.
+        try {
+            this.updateSticky();
+        } catch {
+            /* best-effort */
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Sticky parent rows (Item E). The topmost visible body row's ancestor group
+    // headers are pinned in a reserved zone below the column header, stacked one
+    // per level and bottom-aligned so they sit directly above the live rows. As
+    // the next group at a level scrolls up, it pushes the pinned row out.
+    // -----------------------------------------------------------------------
+
+    private updateSticky(): void {
+        const st = this.stickyEl;
+        const input = this.current;
+        const rows = this.lastDisplayRows;
+        const rowHeight = this.rowHeight;
+        const scrollTop = this.scroller.getScrollTop();
+
+        // Keep the layer at a fixed viewport offset (just below the header).
+        st.style.top = scrollTop + this.baseHeaderH + "px";
+        st.style.width = this.contentWidth + "px";
+        st.style.height = this.stickyReserve * rowHeight + "px";
+
+        // Clear previous pinned rows.
+        while (st.firstChild) {
+            st.removeChild(st.firstChild);
+        }
+        if (!input || this.stickyReserve === 0 || rows.length === 0) {
+            return;
+        }
+
+        // Topmost body row visible just below the reserved zone. With the scroller's
+        // top offset = header + reserve, that row's index is floor(scrollTop / rh).
+        const firstBody = Math.max(0, Math.min(rows.length - 1, Math.floor(scrollTop / rowHeight)));
+        const topNode = rows[firstBody].node;
+
+        // Ancestor group chain of the topmost row (root-most first).
+        const ancestors: RowTreeNode[] = [];
+        let p = topNode.parent;
+        while (p) {
+            ancestors.unshift(p);
+            p = p.parent;
+        }
+        if (ancestors.length === 0) {
+            return;
+        }
+
+        // Push-out: find the next row at or above the deepest pinned level that
+        // belongs to a DIFFERENT branch — the boundary where the deepest pinned
+        // group ends. As that boundary rises into the zone, shift the stack up.
+        const deepestLevel = ancestors[ancestors.length - 1].level;
+        let pushUp = 0;
+        for (let i = firstBody; i < rows.length; i++) {
+            const r = rows[i];
+            if (r.level <= deepestLevel && r.node !== ancestors[r.level]) {
+                // content-y of this boundary row minus scrollTop = viewport-y; its
+                // distance below the header top is how far the zone bottom exceeds it.
+                const viewportY = this.baseHeaderH + this.stickyReserve * rowHeight + (i - firstBody) * rowHeight;
+                const zoneBottom = this.baseHeaderH + this.stickyReserve * rowHeight;
+                const overlap = zoneBottom - viewportY;
+                if (overlap > 0) {
+                    pushUp = Math.min(rowHeight, overlap);
+                }
+                break;
+            }
+        }
+
+        // Render pinned rows, bottom-aligned within the reserved zone.
+        const startSlot = this.stickyReserve - ancestors.length;
+        ancestors.forEach((node, idx) => {
+            const dr: DisplayRow = {
+                node,
+                kind: "group",
+                level: node.level,
+                showValues: true,
+                selectable: false
+            };
+            const rowEl = document.createElement("div");
+            rowEl.className = "nsm-row nsm-row-group nsm-sticky-row";
+            rowEl.style.position = "absolute";
+            rowEl.style.left = "0";
+            rowEl.style.height = rowHeight + "px";
+            rowEl.style.width = this.contentWidth + "px";
+            rowEl.style.top = (startSlot + idx) * rowHeight - pushUp + "px";
+            this.bindRow(rowEl, dr, firstBody);
+            st.appendChild(rowEl);
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -593,8 +732,6 @@ export class Renderer {
             return level < lv.length ? lv[level] : true;
         };
 
-        const mode = input.settings.rowHeaders.layoutMode;
-
         // Native expand/collapse (Phase 2): a group's expansion is driven by the
         // matrix node's own isCollapsed flag from the DataView, not local state.
         //   isCollapsed === true      -> collapsed (host sent no children)
@@ -619,40 +756,15 @@ export class Renderer {
             const expanded = isExpandedNode(node);
             const stEnabled = subtotalOn(node.level);
 
-            if (mode === "tabular") {
-                // Tabular suppresses the group HEADER row only when the group is
-                // EXPANDED (its leaves carry the full ancestor label chain). A
-                // COLLAPSED group has no leaves to carry it, so it renders its own
-                // group header row — which is where the +/- control lives. The
-                // subtotal (summary) row appears only for an expanded group with
-                // row subtotals enabled, and never carries a control.
-                if (expanded && node.children.length > 0) {
-                    node.children.forEach(walk);
-                    if (stEnabled) {
-                        rows.push({
-                            node,
-                            kind: "subtotal",
-                            level: node.level,
-                            showValues: true,
-                            selectable: true
-                        });
-                    }
-                } else {
-                    rows.push({
-                        node,
-                        kind: "group",
-                        level: node.level,
-                        showValues: true,
-                        selectable: true
-                    });
-                }
-                return;
-            }
-
-            // Compact / outline: the group header row is always shown at the TOP of
-            // its level and carries the +/- control. A collapsed group shows just
-            // this row (its engine aggregate); an expanded group shows this row,
-            // then its children, then a subtotal row when subtotals are enabled.
+            // Unified across all layout modes (Item B): the group HEADER row is
+            // always emitted at the TOP of its level and is the sole host of the
+            // +/- control. A collapsed group shows just this row (its engine
+            // aggregate); an expanded group shows this row, then its children, then
+            // a subtotal summary row when subtotals are enabled for that level.
+            // Tabular still differs only in how the row-header CELLS render (leaves
+            // carry the ancestor label chain) — handled in fillRowHeaderCell — not
+            // in which rows are emitted, so tabular now has working per-group
+            // controls too.
             rows.push({
                 node,
                 kind: "group",
@@ -913,9 +1025,13 @@ export class Renderer {
         el.style.height = this.rowHeight + "px";
         el.style.width = this.contentWidth + "px";
 
-        // Row background (alternating / subtotal / selection).
+        // Row background (alternating / grand total / selection). NOTE (Item D):
+        // a SUBTOTAL row does NOT tint the whole row — the off-grey applies only to
+        // the label cell and the cells to its right (values), applied per-cell
+        // below; the row-header cells to the LEFT of the label stay unstyled. A
+        // GRAND TOTAL row keeps full-row styling.
         let bg = theme.background;
-        if (row.kind === "subtotal" || row.kind === "grandtotal") {
+        if (row.kind === "grandtotal") {
             bg = theme.subtotalBackground;
         } else if (input.settings.alternateRows.show && index % 2 === 1) {
             bg = input.settings.alternateRows.color;
@@ -925,6 +1041,13 @@ export class Renderer {
             bg = theme.selectionFill;
         }
         el.style.background = bg;
+
+        // Item D: which row-header column hosts the subtotal label (compact keeps
+        // all labels in column 0; outline/tabular use the row's own level). Cells at
+        // or right of this column get the subtotal tint; ancestor cells to the left
+        // stay unstyled.
+        const subtotalTint = row.kind === "subtotal" && !selected;
+        const subtotalLabelCol = input.settings.rowHeaders.layoutMode === "compact" ? 0 : row.level;
         el.style.borderBottom = "1px solid " + theme.rowBorder;
         el.style.opacity = row.selectable && input.selection.isDimmed(row.node) ? "0.45" : "1";
 
@@ -990,6 +1113,11 @@ export class Renderer {
                     const indent = row.level * input.settings.rowHeaders.indentPerLevel;
                     this.fillRowHeaderCell(cell, row, input, indent);
                 }
+            }
+            // Item D: tint the subtotal label cell and the row-header cells to its
+            // right; ancestor cells to the left stay unstyled.
+            if (subtotalTint && c >= subtotalLabelCol) {
+                cell.style.background = theme.subtotalBackground;
             }
             el.appendChild(cell);
         }
@@ -1219,6 +1347,10 @@ export class Renderer {
         const baseBgColor = isAlt && vfs.altBackgroundColor ? vfs.altBackgroundColor : vfs.backgroundColor;
         if (baseBgColor) {
             cell.style.background = baseBgColor;
+        } else if (row.kind === "subtotal") {
+            // Item D: subtotal value cells carry the off-grey tint (the row itself
+            // is no longer fully tinted). Grand total rows are tinted at row level.
+            cell.style.background = input.theme.subtotalBackground;
         }
         if (baseTextColor) {
             cell.style.color = baseTextColor;

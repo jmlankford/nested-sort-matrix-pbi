@@ -45,6 +45,8 @@ export class SortManager {
     private stack: SortEntry[] = [];
     /** Direction for default pivot column ordering (label sort of col fields). */
     private columnDirection: SortDirection = "asc";
+    /** TEMP (Item A): per-depth {sorted,changed} counts from the last sort pass. */
+    private lastSortStats: { sorted: number; changed: number }[] = [];
 
     public reset(): void {
         this.stack = [];
@@ -151,6 +153,7 @@ export class SortManager {
     // -----------------------------------------------------------------------
 
     public applyNestedSort(result: TransformResult): void {
+        this.lastSortStats = [];
         if (!result.hasRowFields) {
             this.applyColumnOrder(result);
             return;
@@ -159,6 +162,21 @@ export class SortManager {
         this.sortSiblings(result.rootNodes, 0);
         result.rootNodes.forEach((n) => this.sortRecursive(n));
         this.applyColumnOrder(result);
+    }
+
+    /** TEMP (Item A): per-depth "sorted/changed" sibling-array counts, e.g.
+     *  srtd:L0:12/3,L1:48/40 — shows whether recursion reaches deeper levels and
+     *  whether the sort actually reordered anything at each depth. */
+    public getSortedToken(): string {
+        if (this.lastSortStats.length === 0) {
+            return "srtd:-";
+        }
+        const parts: string[] = [];
+        for (let i = 0; i < this.lastSortStats.length; i++) {
+            const s = this.lastSortStats[i] || { sorted: 0, changed: 0 };
+            parts.push(`L${i}:${s.sorted}/${s.changed}`);
+        }
+        return "srtd:" + parts.join(",");
     }
 
     private sortRecursive(node: RowTreeNode): void {
@@ -177,6 +195,8 @@ export class SortManager {
         if (applicable.length === 0) {
             return; // preserve first-seen order
         }
+        // TEMP (Item A): record whether this sibling array actually reordered.
+        const before = siblings.length > 1 ? siblings.map((s) => s.key).join("") : "";
         siblings.sort((a, b) => {
             for (let i = 0; i < applicable.length; i++) {
                 const e = applicable[i];
@@ -195,6 +215,13 @@ export class SortManager {
             }
             return 0;
         });
+        const after = siblings.length > 1 ? siblings.map((s) => s.key).join("") : "";
+        const st = this.lastSortStats[level] || { sorted: 0, changed: 0 };
+        st.sorted++;
+        if (before !== after) {
+            st.changed++;
+        }
+        this.lastSortStats[level] = st;
     }
 
     /** Re-order leaf columns when the user flips pivot column direction. */

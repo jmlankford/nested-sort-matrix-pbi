@@ -90,6 +90,21 @@
     pointer-events: none;
 }
 
+/* ---------------- Sticky parent rows (Item E) ---------------- */
+.nsm-sticky-layer {
+    position: absolute;
+    left: 0;
+    /* Below the column header (z 30), above body rows (z 1). */
+    z-index: 25;
+    pointer-events: none;
+    overflow: hidden;
+}
+.nsm-sticky-row {
+    pointer-events: auto;
+    /* A subtle divider so the pinned stack reads as pinned context. */
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
 /* ---------------- Sticky header ---------------- */
 .nsm-header {
     /* Sticks vertically only; it must scroll horizontally with the body so the

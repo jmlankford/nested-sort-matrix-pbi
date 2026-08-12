@@ -1051,6 +1051,7 @@ export class Visual implements IVisual {
             parts.push(this.diagSchema);
         }
         parts.push(this.sort.getDebugToken());
+        parts.push(this.sort.getSortedToken());
         return parts.join(" ");
     }
 
