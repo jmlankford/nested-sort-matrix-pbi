@@ -619,33 +619,44 @@ export class Renderer {
             const expanded = isExpandedNode(node);
             const stEnabled = subtotalOn(node.level);
 
-            // In tabular mode, group header rows are suppressed. The subtotal row
-            // doubles as the group's summary line AND the expand/collapse handle:
-            //   - collapsed group -> just its subtotal line, carrying a + control
-            //   - expanded group  -> leaf rows above, then its subtotal line with −
-            // The subtotal line is always emitted in tabular so a collapsed group
-            // remains visible and expandable.
             if (mode === "tabular") {
+                // Tabular suppresses the group HEADER row only when the group is
+                // EXPANDED (its leaves carry the full ancestor label chain). A
+                // COLLAPSED group has no leaves to carry it, so it renders its own
+                // group header row — which is where the +/- control lives. The
+                // subtotal (summary) row appears only for an expanded group with
+                // row subtotals enabled, and never carries a control.
                 if (expanded && node.children.length > 0) {
                     node.children.forEach(walk);
+                    if (stEnabled) {
+                        rows.push({
+                            node,
+                            kind: "subtotal",
+                            level: node.level,
+                            showValues: true,
+                            selectable: true
+                        });
+                    }
+                } else {
+                    rows.push({
+                        node,
+                        kind: "group",
+                        level: node.level,
+                        showValues: true,
+                        selectable: true
+                    });
                 }
-                rows.push({
-                    node,
-                    kind: "subtotal",
-                    level: node.level,
-                    showValues: true,
-                    selectable: true
-                });
                 return;
             }
 
+            // Compact / outline: the group header row is always shown at the TOP of
+            // its level and carries the +/- control. A collapsed group shows just
+            // this row (its engine aggregate); an expanded group shows this row,
+            // then its children, then a subtotal row when subtotals are enabled.
             rows.push({
                 node,
                 kind: "group",
                 level: node.level,
-                // Group header rows show their engine-computed aggregate (lifted
-                // from the matrix subtotal node in the transformer). The subtotal
-                // row beneath an expanded group is a separate labeled summary line.
                 showValues: true,
                 selectable: true
             });
@@ -1039,12 +1050,11 @@ export class Renderer {
         const isOwnLevelCell = !isAncestorCell;
 
         // Expand/collapse button. Native EC drives state from the node's own
-        // isCollapsed flag. The control lives on the group row (compact/outline)
-        // and on the subtotal row in tabular mode (where group rows are hidden).
-        const mode = input.settings.rowHeaders.layoutMode;
-        const canToggle =
-            row.node.isCollapsed !== undefined &&
-            (row.kind === "group" || (row.kind === "subtotal" && mode === "tabular"));
+        // isCollapsed flag. The control lives ONLY on the group header row (top of
+        // the level), in every layout mode; subtotal rows never carry it. In
+        // tabular, a collapsed group renders a group header row (see flatten), so
+        // the control appears there.
+        const canToggle = row.node.isCollapsed !== undefined && row.kind === "group";
         if (canToggle && isOwnLevelCell) {
             const ec = input.settings.expandCollapse;
             if (ec.show) {

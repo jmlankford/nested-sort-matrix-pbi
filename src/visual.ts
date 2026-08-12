@@ -562,9 +562,12 @@ export class Visual implements IVisual {
         if (!id) {
             return;
         }
-        // Make the row the active selection first so Power BI recognizes it as a
-        // data point and offers Copy value / Copy selection (not just "Visual").
-        this.selection.selectForContextMenu(node);
+        // Right-click must NOT alter selection (no cross-filter side effect). We
+        // simply open the host context menu for this data point. NOTE: "Copy value"
+        // / "Copy selection" are not part of the custom-visual context-menu surface
+        // (they are exclusive to first-party visuals); custom visuals get the
+        // standard menu (Visual options plus Include/Exclude/Show-as-table for a
+        // recognized data point). See the notes in the commit / report.
         try {
             void this.hostSelectionManager.showContextMenu(id, { x, y }, "rowFields");
         } catch {

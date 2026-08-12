@@ -121,26 +121,6 @@ export class VisualSelectionManager {
         this.onChange();
     }
 
-    /**
-     * Select a single node for a right-click / context-menu gesture (Item C).
-     * Power BI only offers the data-point Copy options (Copy value / Copy
-     * selection) when the clicked point is part of the ACTIVE host selection, so
-     * this makes the node selected before the menu opens. It bypasses the
-     * cross-filter enable gate (a right-click explicitly targets the point) and
-     * preserves an existing selection that already contains the node (so
-     * right-clicking within a multi-selection keeps it for "Copy selection").
-     */
-    public selectForContextMenu(node: RowTreeNode): void {
-        if (this.selected.has(node.key)) {
-            return;
-        }
-        this.selected.clear();
-        this.selected.add(node.key);
-        this.lastClickedKey = node.key;
-        this.syncHost();
-        this.onChange();
-    }
-
     public clearSelection(): void {
         if (this.selected.size === 0) {
             return;
