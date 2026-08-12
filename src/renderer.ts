@@ -315,18 +315,22 @@ export class Renderer {
         const rowHeight = this.rowHeight;
         const scrollTop = this.scroller.getScrollTop();
 
-        // Keep the layer at a fixed viewport offset (just below the header).
-        st.style.top = scrollTop + this.baseHeaderH + "px";
-        st.style.width = this.contentWidth + "px";
-        st.style.height = this.stickyReserve * rowHeight + "px";
-
         // Clear previous pinned rows.
         while (st.firstChild) {
             st.removeChild(st.firstChild);
         }
+        // Hide the layer entirely unless it is actually showing pinned rows, so an
+        // empty absolute overlay can never extend the scroll content (which could
+        // create runaway blank scroll space on small viewports after a resize).
         if (!input || this.stickyReserve === 0 || rows.length === 0) {
+            st.style.display = "none";
             return;
         }
+
+        // Keep the layer at a fixed viewport offset (just below the header).
+        st.style.top = scrollTop + this.baseHeaderH + "px";
+        st.style.width = this.contentWidth + "px";
+        st.style.height = this.stickyReserve * rowHeight + "px";
 
         // Topmost body row visible just below the reserved zone. With the scroller's
         // top offset = header + reserve, that row's index is floor(scrollTop / rh).
@@ -341,8 +345,10 @@ export class Renderer {
             p = p.parent;
         }
         if (ancestors.length === 0) {
+            st.style.display = "none";
             return;
         }
+        st.style.display = "block";
 
         // Push-out: find the next row at or above the deepest pinned level that
         // belongs to a DIFFERENT branch — the boundary where the deepest pinned

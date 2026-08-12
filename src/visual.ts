@@ -98,6 +98,8 @@ export class Visual implements IVisual {
     private prevColSig = "";
     /** TEMP: schema-change diagnostic token (Item 1) appended to the status bar. */
     private diagSchema = "";
+    /** TEMP: count of header sort-handler invocations that actually fired (hclk). */
+    private hclk = 0;
 
     // Native expand/collapse (Phase 2). Expansion state is owned by the host and
     // reflected in each matrix node's isCollapsed flag — the visual keeps no local
@@ -389,14 +391,17 @@ export class Visual implements IVisual {
             cfFor: (slot) => this.cfBySlot.get(slot) || DEFAULTS.cf,
             leafLabelFor: (col) => this.leafLabel(col),
             onRowFieldSort: (level, label) => {
+                this.hclk++;
                 this.sort.toggleRowField(level, label);
                 this.rerender(true);
             },
             onValueSort: (leafColId, label) => {
+                this.hclk++;
                 this.sort.toggleValue(leafColId, label);
                 this.rerender(true);
             },
             onColumnSort: () => {
+                this.hclk++;
                 this.sort.toggleColumnDirection();
                 this.rerender(true);
             },
@@ -502,16 +507,24 @@ export class Visual implements IVisual {
         this.host.persistProperties(objects);
     }
 
-    /** Re-run the transform + render path using the last data view (no host update). */
+    /** Re-run the sort + render path using the cached tree (no host update). */
     private rerender(resetScroll: boolean): void {
-        if (!this.lastTransform || !this.dataView) {
+        // Sorting only needs the cached tree, NOT the live dataView — the old
+        // `!this.dataView` guard could silently no-op a sort click after a
+        // viewport-only update. A render exception must never freeze interaction,
+        // so it is caught and the status bar (incl. the hclk: diagnostic) still
+        // refreshes.
+        if (!this.lastTransform) {
             return;
         }
-        // Re-apply sort to the existing tree and re-render.
-        this.sort.applyNestedSort(this.lastTransform);
-        this.renderer.render(this.buildRenderInput(this.lastTransform));
-        if (resetScroll) {
-            this.renderer.scrollToTop();
+        try {
+            this.sort.applyNestedSort(this.lastTransform);
+            this.renderer.render(this.buildRenderInput(this.lastTransform));
+            if (resetScroll) {
+                this.renderer.scrollToTop();
+            }
+        } catch {
+            /* keep the visual responsive even if a render pass throws */
         }
         this.statusBar.render({
             visible: this.settings.statusBar.show,
@@ -1053,6 +1066,7 @@ export class Visual implements IVisual {
         parts.push(this.sort.getDebugToken());
         parts.push(this.sort.getSortedToken());
         parts.push(this.sort.getKeyToken());
+        parts.push(`hclk:${this.hclk} dv:${this.dataView ? 1 : 0}`);
         return parts.join(" ");
     }
 
