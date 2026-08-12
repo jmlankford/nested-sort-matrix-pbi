@@ -262,13 +262,16 @@ function compareNullableNumber(
     if (an && bn) {
         return 0;
     }
+    // Blank/null is treated as negative infinity for ordering: it sorts FIRST in
+    // ascending order (and, since the caller negates for desc, LAST in descending).
     if (an) {
-        return 1; // nulls sort last in ascending
-    }
-    if (bn) {
         return -1;
     }
-    // Both numbers: numeric compare. Otherwise (text measures) compare lexically.
+    if (bn) {
+        return 1;
+    }
+    // Both numbers: numeric compare. Otherwise (text measures) compare lexically;
+    // an empty string naturally sorts before any non-empty value.
     if (typeof a === "number" && typeof b === "number") {
         return a - b;
     }

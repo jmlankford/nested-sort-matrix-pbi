@@ -598,7 +598,6 @@ export function transform(
         return src ? makeFormatter(src.format != null ? String(src.format) : "") : undefined;
     });
 
-    const lastRowLevel = activeRowFields.length - 1;
     let leafCount = 0;
 
     const buildNode = (mnode: DataViewMatrixNode, parent: RowTreeNode | undefined): RowTreeNode => {
@@ -616,7 +615,16 @@ export function transform(
         const realChildren = children.filter((c) => !c.isSubtotal);
         const subtotalChild = children.filter((c) => c.isSubtotal)[0];
 
-        node.isLeaf = level >= lastRowLevel;
+        // Leaf-ness is driven by the host's isCollapsed flag, NOT the projected
+        // level count. With expand/collapse active a collapsed group arrives with
+        // NO children, and (without keepAllMetadataColumns) the deepest *visible*
+        // level is the last projected level — so a level-based test would wrongly
+        // classify every collapsed group as a leaf and draw no +/- control.
+        //   isCollapsed === true  -> collapsed group (expandable)
+        //   isCollapsed === false -> expanded group
+        //   isCollapsed undefined -> a true leaf (or, defensively, a fully-
+        //                            delivered internal node that still has children)
+        node.isLeaf = mnode.isCollapsed === undefined && realChildren.length === 0;
         if (node.isLeaf) {
             node.values = readNodeValues(mnode);
             leafCount++;
