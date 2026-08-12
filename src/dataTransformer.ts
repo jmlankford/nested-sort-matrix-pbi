@@ -565,7 +565,7 @@ export function transform(
     const diagHisto = diagPerLevel
         .map((c, i) => `L${i}:${c || 0}`)
         .join(" ");
-    const debug = `DBG nodes:${diagTotal} sub:${diagSub} rf:${activeRowFields.length}${
+    let debug = `DBG nodes:${diagTotal} sub:${diagSub} rf:${activeRowFields.length}${
         diagHisto ? " " + diagHisto : ""
     }`;
 
@@ -643,6 +643,28 @@ export function transform(
     (rowRoot.children || [])
         .filter((c) => !c.isSubtotal)
         .forEach((c) => roots.push(buildNode(c, undefined)));
+
+    // TEMP diagnostic (Item 0): report the first EXPANDED non-leaf node's direct
+    // children, straight from the host-delivered tree, to localize the invoice
+    // fan-out — if a customer's children are already wrong here, the host tree is
+    // wrong (request/capabilities); if correct, the bug is in our walk/render.
+    let firstExpanded: RowTreeNode | undefined;
+    const findExpanded = (node: RowTreeNode): void => {
+        if (firstExpanded) {
+            return;
+        }
+        if (!node.isLeaf && node.children.length > 0) {
+            firstExpanded = node;
+            return;
+        }
+        node.children.forEach(findExpanded);
+    };
+    roots.forEach(findExpanded);
+    if (firstExpanded) {
+        const kids = firstExpanded.children;
+        const sample = kids.slice(0, 3).map((c) => c.label).join(",");
+        debug += ` | exp:${firstExpanded.label} kids:${kids.length} [${sample}]`;
+    }
 
     return {
         rootNodes: roots,

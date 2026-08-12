@@ -106,6 +106,8 @@ export interface RenderInput {
     /** Aggregate expand/collapse state of a level, for the header control's icon. */
     levelExpandState: (level: number) => LevelExpandState;
     onRowClick: (node: RowTreeNode, mods: ClickModifiers) => void;
+    /** Right-click on a ROW opens the host context menu (native Copy). */
+    onRowContextMenu: (node: RowTreeNode, x: number, y: number) => void;
     onEmptyClick: () => void;
     /** Right-click on a value column header opens the in-visual CF panel. */
     onColumnRightClick: (slotIndex: number, displayName: string) => void;
@@ -632,7 +634,7 @@ export class Renderer {
                     kind: "subtotal",
                     level: node.level,
                     showValues: true,
-                    selectable: false
+                    selectable: true
                 });
                 return;
             }
@@ -655,7 +657,7 @@ export class Renderer {
                         kind: "subtotal",
                         level: node.level,
                         showValues: true,
-                        selectable: false
+                        selectable: true
                     });
                 }
             }
@@ -1001,6 +1003,15 @@ export class Renderer {
             el.style.cursor = "default";
             el.onclick = null;
         }
+
+        // Right-click on the row opens the host context menu (native Copy).
+        // Value column HEADER right-click (CF panel) is bound elsewhere; row-body
+        // right-click is free.
+        el.oncontextmenu = (e: MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            input.onRowContextMenu(row.node, e.clientX, e.clientY);
+        };
     }
 
     private fillRowHeaderCell(

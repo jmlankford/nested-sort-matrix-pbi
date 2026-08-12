@@ -87,13 +87,12 @@ export class VisualSelectionManager {
         if (!this.isEnabled()) {
             return;
         }
-        // Only leaf-level DATA rows may build/emit an ISelectionId. Group header
-        // rows (which have children) and subtotal/grand-total rows must never
-        // cross-filter — otherwise expanding/collapsing or clicking a group would
-        // filter the report and make other rows disappear.
-        if (!node.isLeaf) {
-            return;
-        }
+        // Every row is selectable (Phase 2 Item 2). Selecting a group/subtotal row
+        // cross-filters to that group's entire scope (all descendants); selecting a
+        // child level narrows to that child's scope. Selection ids come from each
+        // node's matrix identity (ancestor-chained withMatrixNode), so a group's id
+        // matches the report scope of that group. A node without a resolvable
+        // selection id (e.g. grand total) simply contributes nothing to the filter.
         const key = node.key;
 
         if (mods.shiftKey && this.lastClickedKey && this.keyToNode.has(this.lastClickedKey)) {

@@ -89,6 +89,15 @@ export class Visual implements IVisual {
     private settings: VisualSettings = parseVisualSettings(undefined);
     private config: ConfigModel = { rows: [], values: [], cols: [] };
     private schemaSignature = "";
+    // Prefix-tolerant schema-change detection (Item 1): expand/collapse changes only
+    // the DEPTH of projected row levels (the row-field list grows/shrinks as a
+    // prefix), which must NOT count as a schema change or sort/selection/config
+    // would reset on every drill.
+    private prevRowNames: string[] | null = null;
+    private prevValSig = "";
+    private prevColSig = "";
+    /** TEMP: schema-change diagnostic token (Item 1) appended to the status bar. */
+    private diagSchema = "";
 
     // Native expand/collapse (Phase 2). Expansion state is owned by the host and
     // reflected in each matrix node's isCollapsed flag — the visual keeps no local
@@ -230,10 +239,32 @@ export class Visual implements IVisual {
         this.landingEl.style.display = "none";
         this.contentEl.style.display = "block";
 
-        // Detect a structural (schema) change == full data refresh.
-        const signature = this.computeSignature(discovered.rows, discovered.values, discovered.cols);
-        const schemaChanged = signature !== this.schemaSignature;
-        this.schemaSignature = signature;
+        // Detect a structural (schema) change == full data refresh. Expand/collapse
+        // grows or shrinks the projected row-field list as a PREFIX; that is not a
+        // schema change. A real rebind changes the value/column fields or breaks the
+        // row prefix relationship (different field or order at a shared position).
+        const rowNames = discovered.rows.map((f) => f.queryName);
+        const valSig = discovered.values.map((f) => f.queryName).join(",");
+        const colSig = discovered.cols.map((f) => f.queryName).join(",");
+        const isPrefix = (short: string[], long: string[]): boolean =>
+            short.every((x, i) => long[i] === x);
+        const rowsCompatible =
+            this.prevRowNames !== null &&
+            (rowNames.length <= this.prevRowNames.length
+                ? isPrefix(rowNames, this.prevRowNames)
+                : isPrefix(this.prevRowNames, rowNames));
+        const schemaChanged =
+            this.prevRowNames === null ||
+            !rowsCompatible ||
+            valSig !== this.prevValSig ||
+            colSig !== this.prevColSig;
+        this.prevRowNames = rowNames;
+        this.prevValSig = valSig;
+        this.prevColSig = colSig;
+        this.schemaSignature = `r:${rowNames.join(",")}|v:${valSig}|c:${colSig}`;
+        this.diagSchema = `sc:${schemaChanged ? 1 : 0} sig:${
+            this.schemaSignature.length > 44 ? this.schemaSignature.slice(0, 44) + "…" : this.schemaSignature
+        }`;
 
         if (schemaChanged) {
             // Full refresh: reset volatile session state.
@@ -334,7 +365,7 @@ export class Visual implements IVisual {
             sortText: this.sort.getStackText(80),
             rowCount: result.rowCount,
             allExpanded: this.computeAllExpanded(result),
-            debug: this.lastDebug
+            debug: this.statusDebug()
         });
 
         // Continue a bulk Expand All / Collapse All in progress (Part B global).
@@ -373,6 +404,7 @@ export class Visual implements IVisual {
             onToggleLevel: (level) => this.toggleLevel(level),
             levelExpandState: (level) => this.levelExpandState(level),
             onRowClick: (node, mods) => this.selection.handleRowClick(node, mods),
+            onRowContextMenu: (node, x, y) => this.showRowContextMenu(node, x, y),
             onEmptyClick: () => this.selection.clearSelection(),
             columnWidths: this.columnWidths,
             onColumnWidthsChanged: (widths) => this.persistColumnWidths(widths),
@@ -486,7 +518,7 @@ export class Visual implements IVisual {
             sortText: this.sort.getStackText(80),
             rowCount: this.lastTransform.rowCount,
             allExpanded: this.computeAllExpanded(this.lastTransform),
-            debug: this.lastDebug
+            debug: this.statusDebug()
         });
     }
 
@@ -517,6 +549,23 @@ export class Visual implements IVisual {
             void this.hostSelectionManager.toggleExpandCollapse(id);
         } catch {
             this.pendingAnchor = null;
+        }
+    }
+
+    /**
+     * Show the host context menu for a row (Item 3), giving native Copy options.
+     * dataRoles must be supplied because the visual declares drilldown/expandCollapse;
+     * for a row node that role is "rowFields".
+     */
+    private showRowContextMenu(node: RowTreeNode, x: number, y: number): void {
+        const id = node.selectionId || this.buildMatrixSelectionId(node);
+        if (!id) {
+            return;
+        }
+        try {
+            void this.hostSelectionManager.showContextMenu(id, { x, y }, "rowFields");
+        } catch {
+            /* ignore host errors so the UI stays responsive */
         }
     }
 
@@ -631,14 +680,15 @@ export class Visual implements IVisual {
         }
     }
 
-    /** Attach a selection id to every leaf node (for cross-filter, Part E). */
+    /**
+     * Attach a matrix selection id to EVERY row node (Item 2). Leaf, group and
+     * subtotal rows are all selectable; a group's id (ancestor-chained
+     * withMatrixNode ending at the group) scopes cross-filter to that whole group.
+     */
     private attachSelectionIds(result: TransformResult): void {
         const walk = (node: RowTreeNode): void => {
-            if (node.isLeaf) {
-                node.selectionId = this.buildMatrixSelectionId(node);
-            } else {
-                node.children.forEach(walk);
-            }
+            node.selectionId = this.buildMatrixSelectionId(node);
+            node.children.forEach(walk);
         };
         result.rootNodes.forEach(walk);
     }
@@ -988,17 +1038,9 @@ export class Visual implements IVisual {
     // Helpers.
     // -----------------------------------------------------------------------
 
-    private computeSignature(rows: FieldMeta[], values: FieldMeta[], cols: FieldMeta[]): string {
-        // Include the ordered queryName sequence for each role.
-        // Any change in field presence OR order produces a different signature,
-        // triggering a schema-change reset that re-reads the DataView order
-        // as the new baseline for reconcileConfig. This intentionally resets any
-        // config-panel reordering the user applied, because the designer changing
-        // the field well order should become the new baseline the panel reflects.
-        const rowSig = rows.map((f) => f.queryName).join(",");
-        const valSig = values.map((f) => f.queryName).join(",");
-        const colSig = cols.map((f) => f.queryName).join(",");
-        return `r:${rowSig}|v:${valSig}|c:${colSig}`;
+    /** TEMP: combine the transform diagnostics with the schema-change token. */
+    private statusDebug(): string {
+        return this.diagSchema ? this.lastDebug + " " + this.diagSchema : this.lastDebug;
     }
 
     private leafLabel(col: LeafColumn): string {
