@@ -60,7 +60,7 @@ import { VisualSelectionManager } from "./selectionManager";
 import { StatusBar } from "./statusBar";
 import { ConfigPanel, ConfigModel, SlotEntry, ConfigRole } from "./configPanel";
 import { Renderer, RenderInput, ThemeColors, ColumnWidth, ScrollAnchor, LevelExpandState } from "./renderer";
-import { ContextMenu } from "./contextMenu";
+import { ContextMenu, ContextMenuItem } from "./contextMenu";
 import { copyText, ManualCopyPanel } from "./clipboard";
 
 interface PersistedSlot {
@@ -118,6 +118,14 @@ export class Visual implements IVisual {
     private prevRowNames: string[] | null = null;
     private prevValSig = "";
     private prevColSig = "";
+    // The full set of bound row / column fields, accumulated across updates. The
+    // Matrix DataView only projects the currently-EXPANDED row levels, so
+    // discoverFields shrinks as levels collapse; the Setup panel must still list
+    // every bound field regardless of expansion state (binding is not view state).
+    // These retain the deepest set seen for the current schema and are rebuilt only
+    // on a real rebind (schemaChanged).
+    private knownRows: FieldMeta[] = [];
+    private knownCols: FieldMeta[] = [];
     /** Leaf row count of the previous host update. A change that is NOT a schema
      *  change and NOT an expand/collapse (which anchors scroll) means the row set
      *  changed via filter / slicer / data refresh — reset the scroller to the top
@@ -283,6 +291,24 @@ export class Visual implements IVisual {
         this.prevColSig = colSig;
         this.schemaSignature = `r:${rowNames.join(",")}|v:${valSig}|c:${colSig}`;
 
+        // Maintain the full bound-field set for the config panel. On a real rebind
+        // rebuild it from the fresh projection; otherwise (expand/collapse only)
+        // union the projected fields with what we already knew, so collapsed levels
+        // stay listed. The transform below still uses the PROJECTED `discovered`
+        // fields, so only currently-materialised levels enter the tree.
+        if (schemaChanged) {
+            this.knownRows = discovered.rows.slice();
+            this.knownCols = discovered.cols.slice();
+        } else {
+            this.knownRows = this.mergeKnownFields(this.knownRows, discovered.rows);
+            this.knownCols = this.mergeKnownFields(this.knownCols, discovered.cols);
+        }
+        const fullDiscovered = {
+            rows: this.knownRows,
+            values: discovered.values,
+            cols: this.knownCols
+        };
+
         if (schemaChanged) {
             // Full refresh: reset volatile session state. The ACTIVE SORT is
             // deliberately NOT reset here — adding or removing a bound field must
@@ -293,11 +319,11 @@ export class Visual implements IVisual {
             this.selectedColumnIds = new Set();
             this.bulkOp = null;
             this.pendingAnchor = null;
-            this.config = this.reconcileConfig(discovered, this.parsePersisted(this.settings.configState));
+            this.config = this.reconcileConfig(fullDiscovered, this.parsePersisted(this.settings.configState));
         } else {
             // Cross-filter / value update: keep order/visibility/renames; just
             // ensure config still covers the (unchanged) slot set.
-            this.config = this.reconcileConfig(discovered, this.configToPersisted(this.config));
+            this.config = this.reconcileConfig(fullDiscovered, this.configToPersisted(this.config));
         }
 
         // Resolve active fields from config (visible + ordered) and apply renames.
@@ -509,18 +535,45 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Right-click on a row: open the visual's own minimal copy menu. Cell-level
-     * Copy is not available from the host context menu for custom visuals, so we
-     * build TSV ourselves. Right-click does NOT alter the row selection or emit a
-     * cross-filter; "Copy selection" copies the current selection, or just the
-     * right-clicked row when nothing is selected.
+     * Right-click on a row: open the visual's own context menu (stock-matrix-style
+     * expand/collapse plus Copy). Cell-level Copy is not available from the host
+     * context menu for custom visuals, so we build TSV ourselves. Right-click does
+     * NOT alter the row selection or emit a cross-filter; "Copy selection" copies
+     * the current selection, or just the right-clicked row when nothing is selected.
+     * Expand/collapse use the host API with entireLevel, matching the per-level
+     * column-header controls; "this field" targets the clicked row's level.
      */
     private showRowContextMenu(node: RowTreeNode, x: number, y: number): void {
-        this.contextMenu.open(
-            [{ label: "Copy selection", action: () => this.copyRows(node) }],
-            x,
-            y
-        );
+        const items: ContextMenuItem[] = [
+            { label: "Expand this field", action: () => this.setLevelExpanded(node.level, true) },
+            { label: "Expand all fields", action: () => this.toggleExpandAll(true) },
+            { label: "Collapse this field", action: () => this.setLevelExpanded(node.level, false) },
+            { label: "Collapse all fields", action: () => this.toggleExpandAll(false) },
+            { label: "Copy selection", action: () => this.copyRows(node) }
+        ];
+        this.contextMenu.open(items, x, y);
+    }
+
+    /**
+     * Explicitly expand or collapse an ENTIRE hierarchy level via the host API. To
+     * expand we need a currently-collapsed node at that level; to collapse, an
+     * expanded one. If the level is already in the target state, this is a no-op.
+     */
+    private setLevelExpanded(level: number, expand: boolean): void {
+        const node = this.findLevelNode(level, expand);
+        if (!node || node.isCollapsed !== expand) {
+            return; // nothing to toggle in that direction
+        }
+        const id = this.buildMatrixSelectionId(node);
+        if (!id) {
+            return;
+        }
+        this.pendingAnchor = this.renderer.captureAnchor();
+        try {
+            void this.hostSelectionManager.toggleExpandCollapse(id, true /* entireLevel */);
+        } catch {
+            this.pendingAnchor = null;
+        }
     }
 
     /**
@@ -900,6 +953,10 @@ export class Visual implements IVisual {
 
     private buildDefaultConfig(): ConfigModel {
         const discovered = discoverFields(this.dataView);
+        // Use the accumulated full field set so Reset lists every bound field even
+        // when deeper levels are currently collapsed (values are never collapsed).
+        const rows = this.mergeKnownFields(this.knownRows, discovered.rows);
+        const cols = this.mergeKnownFields(this.knownCols, discovered.cols);
         const make = (fields: FieldMeta[], role: ConfigRole): SlotEntry[] =>
             fields.map((f) => ({
                 role,
@@ -909,9 +966,9 @@ export class Visual implements IVisual {
                 rename: null
             }));
         return {
-            rows: make(discovered.rows, "row"),
+            rows: make(rows, "row"),
             values: make(discovered.values, "value"),
-            cols: make(discovered.cols, "col")
+            cols: make(cols, "col")
         };
     }
 
@@ -992,6 +1049,20 @@ export class Visual implements IVisual {
         const map = (entries: SlotEntry[]): PersistedSlot[] =>
             entries.map((e) => ({ i: e.slotIndex, v: e.visible }));
         return { rows: map(model.rows), values: map(model.values), cols: map(model.cols) };
+    }
+
+    /**
+     * Union the previously-known bound fields with the currently-projected ones,
+     * keyed by slot index (which equals the hierarchy level for row fields). The
+     * projected `discovered` list is a prefix of the full binding when deeper
+     * levels are collapsed, so any known field beyond that prefix is retained.
+     * Fresh metadata from `discovered` overwrites stale entries at the same slot.
+     */
+    private mergeKnownFields(prev: FieldMeta[], discovered: FieldMeta[]): FieldMeta[] {
+        const bySlot = new Map<number, FieldMeta>();
+        prev.forEach((f) => bySlot.set(f.slotIndex, f));
+        discovered.forEach((f) => bySlot.set(f.slotIndex, f));
+        return Array.from(bySlot.values()).sort((a, b) => a.slotIndex - b.slotIndex);
     }
 
     /**
