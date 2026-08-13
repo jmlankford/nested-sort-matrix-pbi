@@ -644,33 +644,65 @@ export function transform(
         .filter((c) => !c.isSubtotal)
         .forEach((c) => roots.push(buildNode(c, undefined)));
 
-    // TEMP diagnostic (Item A): report the DEEPEST expanded non-leaf node straight
-    // from the HOST-delivered matrix tree (mnode.children), before any of our walk
-    // logic, to localize the invoice fan-out. If a customer's host children are
-    // already every invoice in the model, the host tree is wrong (request/
-    // capabilities); if they are only that customer's invoices, the bug is ours.
-    let deepestExp: { level: number; mnode: DataViewMatrixNode } | undefined;
+    // TEMP diagnostic (fan-out): compare the HOST-delivered children of TWO sibling
+    // parents at the deepest expanded level, straight from mnode.children before any
+    // of our walk logic. This is the definitive cross-join test the earlier one-parent
+    // "kids:N" readout could not give: one parent showing N children is ambiguous
+    // (it may legitimately own N), but TWO different parents both showing the SAME N
+    // children with the SAME first labels can only mean the host cross-joined every
+    // invoice under every customer. If the two child lists differ, the host tree is
+    // correct and any fan-out is on our side (render/scroller).
+    //   sib:L<lvl> A=<label>(n)[c0,c1] B=<label>(n)[c0,c1] same:<0|1>
+    // same:1  => host cross-join (bug is the request/capabilities)
+    // same:0  => host tree is correct (bug, if any, is ours)
+    const byLevel: { [lvl: number]: DataViewMatrixNode[] } = {};
     const rawWalk = (mnode: DataViewMatrixNode): void => {
         const realKids = (mnode.children || []).filter((c) => !c.isSubtotal);
         if (realKids.length > 0 && mnode.level != null) {
-            // An expanded non-leaf group at mnode.level. Keep the first one seen at
-            // the deepest level (strict >, so earlier same-level nodes win).
-            if (!deepestExp || mnode.level > deepestExp.level) {
-                deepestExp = { level: mnode.level, mnode };
-            }
+            (byLevel[mnode.level] || (byLevel[mnode.level] = [])).push(mnode);
         }
         (mnode.children || []).forEach(rawWalk);
     };
     rawWalk(rowRoot);
-    if (deepestExp) {
-        const dl = deepestExp.level;
-        const parentLabel = formatLabel(matrixNodeRaw(deepestExp.mnode), rowLevelFormatters[dl]);
-        const realKids = (deepestExp.mnode.children || []).filter((c) => !c.isSubtotal);
-        const sample = realKids
-            .slice(0, 3)
-            .map((c) => formatLabel(matrixNodeRaw(c), rowLevelFormatters[c.level != null ? c.level : dl + 1]))
-            .join(",");
-        debug += ` | exp:L${dl}:${parentLabel} kids:${realKids.length} [${sample}]`;
+    // Deepest level that has at least two expanded parents to compare.
+    let cmpLevel = -1;
+    for (const k in byLevel) {
+        const lvl = Number(k);
+        if (byLevel[lvl].length >= 2 && lvl > cmpLevel) {
+            cmpLevel = lvl;
+        }
+    }
+    if (cmpLevel >= 0) {
+        const kidLabels = (m: DataViewMatrixNode): string[] =>
+            (m.children || [])
+                .filter((c) => !c.isSubtotal)
+                .map((c) => formatLabel(matrixNodeRaw(c), rowLevelFormatters[c.level != null ? c.level : cmpLevel + 1]));
+        const [a, b] = byLevel[cmpLevel];
+        const al = kidLabels(a);
+        const bl = kidLabels(b);
+        const aLabel = formatLabel(matrixNodeRaw(a), rowLevelFormatters[cmpLevel]);
+        const bLabel = formatLabel(matrixNodeRaw(b), rowLevelFormatters[cmpLevel]);
+        // "same" = identical child multisets (fan-out signature). Compare full sorted
+        // label lists so ordering differences don't mask a genuine cross-join.
+        const same =
+            al.length === bl.length && al.slice().sort().join("") === bl.slice().sort().join("")
+                ? 1
+                : 0;
+        debug +=
+            ` | sib:L${cmpLevel}` +
+            ` A=${aLabel}(${al.length})[${al.slice(0, 2).join(",")}]` +
+            ` B=${bLabel}(${bl.length})[${bl.slice(0, 2).join(",")}]` +
+            ` same:${same}`;
+    } else {
+        // Only one (or zero) expanded parent available — surface it so the readout is
+        // never blank; expand a SECOND customer to get the comparison.
+        const one = byLevel[Object.keys(byLevel).map(Number).reduce((m, v) => Math.max(m, v), -1)];
+        if (one && one[0]) {
+            const m = one[0];
+            const lvl = m.level != null ? m.level : 0;
+            const kids = (m.children || []).filter((c) => !c.isSubtotal);
+            debug += ` | sib:L${lvl} A=${formatLabel(matrixNodeRaw(m), rowLevelFormatters[lvl])}(${kids.length}) B=- same:?`;
+        }
     }
 
     return {
