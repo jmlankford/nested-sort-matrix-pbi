@@ -12,6 +12,8 @@
 export interface StatusBarCallbacks {
     onSetup: () => void;
     onToggleExpandAll: (expand: boolean) => void;
+    /** POC (Item A): cycle the field-parameter selection via applyJsonFilter. */
+    onTestParam: () => void;
 }
 
 export interface StatusBarState {
@@ -19,6 +21,8 @@ export interface StatusBarState {
     sortText: string;
     rowCount: number;
     allExpanded: boolean;
+    /** POC (Item A): field-parameter filter diagnostic, shown at the right side. */
+    debug?: string;
 }
 
 const BAR_HEIGHT = 24;
@@ -27,8 +31,10 @@ export class StatusBar {
     private readonly root: HTMLElement;
     private readonly setupBtn: HTMLElement;
     private readonly expandBtn: HTMLElement;
+    private readonly testParamBtn: HTMLElement;
     private readonly sortLabel: HTMLElement;
     private readonly rowCountLabel: HTMLElement;
+    private readonly debugLabel: HTMLElement;
     private allExpanded = false;
     private visible = true;
     private lastRowCount = 0;
@@ -66,17 +72,34 @@ export class StatusBar {
             this.callbacks.onToggleExpandAll(this.allExpanded);
         });
 
+        // POC (Item A): "Test parameter switch" button.
+        this.testParamBtn = document.createElement("button");
+        this.testParamBtn.className = "nsm-statusbar-btn";
+        this.testParamBtn.textContent = "Test parameter switch";
+        this.testParamBtn.title = "POC: cycle the field-parameter selection via applyJsonFilter";
+        this.testParamBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.callbacks.onTestParam();
+        });
+
         this.sortLabel = document.createElement("span");
         this.sortLabel.className = "nsm-statusbar-sort";
 
         left.appendChild(this.setupBtn);
         left.appendChild(this.expandBtn);
+        left.appendChild(this.testParamBtn);
         left.appendChild(this.sortLabel);
 
         const right = document.createElement("div");
         right.className = "nsm-statusbar-right";
+        // POC (Item A): filter diagnostic label.
+        this.debugLabel = document.createElement("span");
+        this.debugLabel.className = "nsm-statusbar-debug";
+        this.debugLabel.style.marginRight = "12px";
+        this.debugLabel.style.opacity = "0.85";
         this.rowCountLabel = document.createElement("span");
         this.rowCountLabel.className = "nsm-statusbar-rowcount";
+        right.appendChild(this.debugLabel);
         right.appendChild(this.rowCountLabel);
 
         this.root.appendChild(left);
@@ -114,6 +137,9 @@ export class StatusBar {
             this.flashTimer = null;
         }
         this.rowCountLabel.textContent = formatCount(state.rowCount) + " rows";
+        // POC (Item A): filter diagnostic.
+        this.debugLabel.textContent = state.debug || "";
+        this.debugLabel.title = state.debug || "";
     }
 
     /** Show a transient confirmation (e.g. "Copied 14 rows") in the row-count slot,

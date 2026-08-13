@@ -15,6 +15,12 @@
       "name": "values",
       "displayName": "Values",
       "kind": "Measure"
+    },
+    {
+      "name": "reorderControl",
+      "displayName": "Reorder Control (POC)",
+      "description": "POC: bind a field parameter's key column here so the visual can drive its selection via the filter API.",
+      "kind": "Grouping"
     }
   ],
 
@@ -31,6 +37,11 @@
           "select": [
             { "for": { "in": "values" } }
           ]
+        }
+      },
+      "categorical": {
+        "categories": {
+          "for": { "in": "reorderControl" }
         }
       }
     }
@@ -93,6 +104,9 @@
         "columnWidths": {
           "displayName": "Column Widths",
           "type": { "text": true }
+        },
+        "filter": {
+          "type": { "filter": true }
         }
       }
     },

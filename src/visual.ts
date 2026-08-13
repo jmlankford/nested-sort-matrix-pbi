@@ -31,6 +31,9 @@ import SimpleVisualFormattingSlice = powerbi.visuals.SimpleVisualFormattingSlice
 import FormattingComponent = powerbi.visuals.FormattingComponent;
 import FormattingDescriptor = powerbi.visuals.FormattingDescriptor;
 import VisualEnumerationInstanceKinds = powerbi.VisualEnumerationInstanceKinds;
+import FilterAction = powerbi.FilterAction;
+// POC (Item A): filter API for driving a field-parameter selection.
+import { BasicFilter, IFilterColumnTarget } from "powerbi-models";
 
 // The "whole visual" selector. Power BI accepts null at runtime; the typed
 // Selector interface is non-nullable, so we cast a single shared constant.
@@ -126,6 +129,20 @@ export class Visual implements IVisual {
     // on a real rebind (schemaChanged).
     private knownRows: FieldMeta[] = [];
     private knownCols: FieldMeta[] = [];
+
+    // ---- POC (Item A): drive a field-parameter selection via applyJsonFilter ----
+    /** Filter target (table.column) derived from the Reorder Control binding. */
+    private pocTarget: IFilterColumnTarget | null = null;
+    /** Accumulated distinct candidate values from the Reorder Control column
+     *  (retained across updates so the list survives once the filter narrows it). */
+    private pocCandidates: (string | number | boolean)[] = [];
+    /** The value we last applied (so the button cycles to the NEXT one). */
+    private pocApplied: string = "";
+    /** Round-trip: the jsonFilters string received back in the last update. */
+    private pocJsonFilters: string = "";
+    /** Guard: true on the update caused by our own applyJsonFilter, so we never
+     *  re-apply in response to our own filter (this POC only applies on click). */
+    private pocSelfFilterPending = false;
     /** Leaf row count of the previous host update. A change that is NOT a schema
      *  change and NOT an expand/collapse (which anchors scroll) means the row set
      *  changed via filter / slicer / data refresh — reset the scroller to the top
@@ -203,7 +220,8 @@ export class Visual implements IVisual {
 
         this.statusBar = new StatusBar(this.target, {
             onSetup: () => this.openConfig(),
-            onToggleExpandAll: (expand) => this.toggleExpandAll(expand)
+            onToggleExpandAll: (expand) => this.toggleExpandAll(expand),
+            onTestParam: () => this.pocTestSwitch()
         });
 
         this.configPanel = new ConfigPanel(this.target, {
@@ -230,6 +248,11 @@ export class Visual implements IVisual {
         const dataView: DataView | undefined =
             options.dataViews && options.dataViews.length ? options.dataViews[0] : undefined;
         this.dataView = dataView;
+
+        // POC (Item A): read the Reorder Control binding (target + candidates) and
+        // the jsonFilters round-trip. Applying filters happens ONLY on the button
+        // click, never here, so our own filter can't trigger a re-apply loop.
+        this.pocReadReorderControl(options);
 
         const metadataObjects = dataView && dataView.metadata ? dataView.metadata.objects : undefined;
         this.settings = parseVisualSettings(metadataObjects);
@@ -421,7 +444,8 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: result.rowCount,
-            allExpanded: this.computeAllExpanded(result)
+            allExpanded: this.computeAllExpanded(result),
+            debug: this.pocDiag()
         });
 
         // Continue a bulk Expand All / Collapse All in progress (Part B global).
@@ -500,8 +524,91 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: this.lastTransform.rowCount,
-            allExpanded: this.computeAllExpanded(this.lastTransform)
+            allExpanded: this.computeAllExpanded(this.lastTransform),
+            debug: this.pocDiag()
         });
+    }
+
+    // -----------------------------------------------------------------------
+    // POC (Item A): prove applyJsonFilter can drive a field-parameter selection.
+    // -----------------------------------------------------------------------
+
+    /**
+     * Read the Reorder Control binding from the categorical dataView delivered
+     * alongside the matrix, deriving the filter target (table.column) and the
+     * candidate values, and capture the jsonFilters round-trip. Applying filters is
+     * done only in pocTestSwitch (on button click).
+     */
+    private pocReadReorderControl(options: VisualUpdateOptions): void {
+        // The matrix + categorical mappings both populate the same dataView; find a
+        // dataView that carries a categorical projection.
+        const dvs = options.dataViews || [];
+        let cat: powerbi.DataViewCategorical | undefined;
+        for (const dv of dvs) {
+            if (dv && dv.categorical && dv.categorical.categories && dv.categorical.categories.length) {
+                cat = dv.categorical;
+                break;
+            }
+        }
+        if (cat && cat.categories && cat.categories[0]) {
+            const col = cat.categories[0];
+            const qn = col.source && col.source.queryName ? col.source.queryName : "";
+            const dot = qn.indexOf(".");
+            this.pocTarget =
+                dot > 0
+                    ? { table: qn.substring(0, dot), column: col.source.displayName }
+                    : null;
+            // Accumulate distinct candidate values (retain across filter narrowing).
+            (col.values || []).forEach((v) => {
+                if (v === null || v === undefined) {
+                    return;
+                }
+                const val = v as string | number | boolean;
+                if (!this.pocCandidates.some((c) => String(c) === String(val))) {
+                    this.pocCandidates.push(val);
+                }
+            });
+        } else {
+            this.pocTarget = null;
+        }
+
+        // Round-trip: what filter the host currently reports back to us.
+        const jf = options.jsonFilters;
+        this.pocJsonFilters = jf && jf.length ? JSON.stringify(jf) : "none";
+        // This update reflects our own filter; nothing further to do (we never
+        // re-apply here). Clear the pending flag now that the round-trip arrived.
+        this.pocSelfFilterPending = false;
+    }
+
+    /** Cycle the field-parameter selection to the NEXT candidate via a BasicFilter. */
+    private pocTestSwitch(): void {
+        if (!this.pocTarget || this.pocCandidates.length === 0) {
+            this.statusBar.flash("POC: no Reorder Control binding / candidates", 4000);
+            return;
+        }
+        // Determine the next candidate after the last-applied one (cycle).
+        let idx = this.pocCandidates.findIndex((c) => String(c) === this.pocApplied);
+        idx = (idx + 1) % this.pocCandidates.length;
+        const next = this.pocCandidates[idx];
+        this.pocApplied = String(next);
+
+        const filter = new BasicFilter(this.pocTarget, "In", next);
+        this.pocSelfFilterPending = true;
+        try {
+            this.host.applyJsonFilter(filter, "general", "filter", FilterAction.merge);
+        } catch {
+            this.pocSelfFilterPending = false;
+            this.statusBar.flash("POC: applyJsonFilter threw", 4000);
+        }
+    }
+
+    /** Compact POC diagnostic for the status bar. */
+    private pocDiag(): string {
+        const tgt = this.pocTarget
+            ? `${this.pocTarget.table}.${this.pocTarget.column}`
+            : "(none)";
+        const cands = this.pocCandidates.map((c) => String(c)).join("|") || "-";
+        return `poc tgt:${tgt} cand:[${cands}] applied:${this.pocApplied || "-"} jf:${this.pocJsonFilters}`;
     }
 
     /** Re-render the body only (selection change) without recomputing layout. */
