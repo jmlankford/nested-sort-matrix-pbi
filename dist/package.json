@@ -1,5 +1,5 @@
 {
-		"version": "3.1.0.1",
+		"version": "3.1.0.2",
 		"author": {"name":"Nested Sort Matrix","email":"jmlankford3@gmail.com"},
 		"resources": [
 			{
@@ -8,7 +8,7 @@
 				"file": "resources/nestedSortMatrix8F3A1C7B2D4E4F5A9B6C0D1E2F3A4B5C.pbiviz.json"
 			}
 		],
-		"visual": {"name":"nestedSortMatrix","displayName":"Nested Sort Matrix","guid":"nestedSortMatrix8F3A1C7B2D4E4F5A9B6C0D1E2F3A4B5C","visualClassName":"Visual","version":"3.1.0.1","description":"Replaces the stock matrix with true nested/hierarchical sorting scoped within parent groups, plus a runtime configuration panel to hide and rename row levels, reorder/hide/rename value columns, and hide column pivot fields. Matrix DataView with engine-computed values at every hierarchy level, native expand/collapse, pivot, subtotals, conditional formatting, and row virtualization.","supportUrl":"https://learn.microsoft.com/power-bi/developer/visuals/","gitHubUrl":""},
+		"visual": {"name":"nestedSortMatrix","displayName":"Nested Sort Matrix","guid":"nestedSortMatrix8F3A1C7B2D4E4F5A9B6C0D1E2F3A4B5C","visualClassName":"Visual","version":"3.1.0.2","description":"Replaces the stock matrix with true nested/hierarchical sorting scoped within parent groups, plus a runtime configuration panel to hide and rename row levels, reorder/hide/rename value columns, and hide column pivot fields. Matrix DataView with engine-computed values at every hierarchy level, native expand/collapse, pivot, subtotals, conditional formatting, and row virtualization.","supportUrl":"https://learn.microsoft.com/power-bi/developer/visuals/","gitHubUrl":""},
 		"metadata": {
 			"pbivizjson": {
 				"resourceId": "rId0"

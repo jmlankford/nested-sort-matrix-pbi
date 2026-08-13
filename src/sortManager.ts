@@ -163,22 +163,8 @@ export class SortManager {
         if (!a) {
             return; // no active sort -> preserve engine order
         }
-        // TEMP (Item A): count that this depth's sibling array was visited/sorted,
-        // and capture the comparison keys of the first 3 siblings at depth 1 — the
-        // exact values the comparator extracts for non-apex nodes.
+        // TEMP (Item A): count that this depth's sibling array was visited/sorted.
         this.diagCounts[level] = (this.diagCounts[level] || 0) + 1;
-        if (level === 1 && !this.diagKeys && siblings.length > 1) {
-            const keyOf = (n: RowTreeNode): string => {
-                if (a.kind === "value") {
-                    const v = n.values[a.leafColId];
-                    return v === undefined ? "undef" : v === null ? "null" : String(v);
-                }
-                // Row-field: what comparePrimitive compares — raw value + label.
-                const rawType = n.rawValue === null ? "null" : typeof n.rawValue;
-                return `${n.label}#${rawType}:${n.rawValue}`;
-            };
-            this.diagKeys = "[" + siblings.slice(0, 3).map(keyOf).join(" , ") + "]";
-        }
         siblings.sort((x, y) => {
             let c =
                 a.kind === "value"
@@ -189,6 +175,20 @@ export class SortManager {
             }
             return c;
         });
+        // TEMP (Item A): capture the POST-sort keys of the first 3 siblings in the
+        // first depth-1 array so the reading shows the RESULTING order (verify it is
+        // alphabetical at depth 1).
+        if (level === 1 && !this.diagKeys && siblings.length > 1) {
+            const keyOf = (n: RowTreeNode): string => {
+                if (a.kind === "value") {
+                    const v = n.values[a.leafColId];
+                    return v === undefined ? "undef" : v === null ? "null" : String(v);
+                }
+                const rawType = n.rawValue === null ? "null" : typeof n.rawValue;
+                return `${n.label}#${rawType}:${n.rawValue}`;
+            };
+            this.diagKeys = "[" + siblings.slice(0, 3).map(keyOf).join(" , ") + "]";
+        }
     }
 
     /** Re-order leaf columns when the user flips pivot column direction. */
@@ -306,16 +306,24 @@ function comparePrimitive(
     aLabel: string,
     bLabel: string
 ): number {
-    // True numeric / date fields order by their underlying value (2 before 10;
-    // chronological), but ONLY when the values actually differ — an equal raw
-    // must still fall through to the label so distinct labels never tie.
-    if (typeof aRaw === "number" && typeof bRaw === "number" && aRaw !== bRaw) {
+    // A row-field sort orders every level by the node's OWN DISPLAYED row label,
+    // with numeric-aware collation ("2" before "10"), at every depth — the same
+    // scoping as a value sort. The underlying raw grouping value is deliberately
+    // NOT the primary key: a numeric key (e.g. a customer/invoice number) whose
+    // natural ascending order coincides with the engine's delivery order would make
+    // the sort a silent no-op below the apex, even though the labels the user reads
+    // are distinct. Sorting by the label matches what the user sees and reorders at
+    // every depth. The raw value only breaks exact-label ties so equal labels stay
+    // deterministic (numeric/chronological among identically-labelled nodes).
+    const byLabel = collateLabel(aLabel, bLabel);
+    if (byLabel !== 0) {
+        return byLabel;
+    }
+    if (typeof aRaw === "number" && typeof bRaw === "number") {
         return aRaw - bRaw;
     }
-    if (aRaw instanceof Date && bRaw instanceof Date && aRaw.getTime() !== bRaw.getTime()) {
+    if (aRaw instanceof Date && bRaw instanceof Date) {
         return aRaw.getTime() - bRaw.getTime();
     }
-    // Everything else — text fields, mixed types, or equal raw values — orders by
-    // the DISPLAYED row label at every hierarchy level, deterministically.
-    return collateLabel(aLabel, bLabel);
+    return 0;
 }
