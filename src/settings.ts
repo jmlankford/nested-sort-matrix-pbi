@@ -37,6 +37,7 @@ export const COL_ROLE_PREFIX = "colField";
 // ---------------------------------------------------------------------------
 export type RowHeightMode = "auto" | "fixed";
 export type LayoutMode = "compact" | "outline" | "tabular";
+export type HeaderAlignment = "left" | "center" | "right";
 export type ExpandStyle = "plusMinus" | "chevron" | "triangle";
 export type DisplayUnit = "none" | "thousands" | "millions" | "billions";
 export type ColumnApplyTo = "all" | "values" | "header" | "subtotals" | "grandTotal";
@@ -81,6 +82,8 @@ export interface RowHeaderSettings {
     repeatRowHeaders: boolean;
     /** Wrap long row-field header names instead of clipping with ellipsis. */
     wrapHeaderText: boolean;
+    /** Horizontal alignment of row-field header text. */
+    headerAlignment: HeaderAlignment;
 }
 
 export interface ColumnHeaderSettings {
@@ -91,6 +94,8 @@ export interface ColumnHeaderSettings {
     columnFontFamily: string;
     /** Wrap long value-column header names instead of clipping with ellipsis. */
     wrapHeaderText: boolean;
+    /** Horizontal alignment of value / pivot column header text. */
+    headerAlignment: HeaderAlignment;
 }
 
 export interface ExpandCollapseSettings {
@@ -230,14 +235,16 @@ export const DEFAULTS = {
         rowFontFamily: "Segoe UI",
         layoutMode: "compact" as LayoutMode,
         repeatRowHeaders: false,
-        wrapHeaderText: false
+        wrapHeaderText: false,
+        headerAlignment: "left" as HeaderAlignment
     },
     columnHeaders: {
         bold: true,
         fontSize: 13,
         showSortArrows: true,
         columnFontFamily: "Segoe UI",
-        wrapHeaderText: false
+        wrapHeaderText: false,
+        headerAlignment: "left" as HeaderAlignment
     },
     expandCollapse: {
         show: true,
@@ -464,6 +471,12 @@ export function parseVisualSettings(metadataObjects: DataViewObjects | undefined
                 "rowHeaders",
                 "wrapHeaderText",
                 DEFAULTS.rowHeaders.wrapHeaderText
+            ),
+            headerAlignment: getEnum<HeaderAlignment>(
+                metadataObjects,
+                "rowHeaders",
+                "headerAlignment",
+                DEFAULTS.rowHeaders.headerAlignment
             )
         },
         columnHeaders: {
@@ -491,6 +504,12 @@ export function parseVisualSettings(metadataObjects: DataViewObjects | undefined
                 "columnHeaders",
                 "wrapHeaderText",
                 DEFAULTS.columnHeaders.wrapHeaderText
+            ),
+            headerAlignment: getEnum<HeaderAlignment>(
+                metadataObjects,
+                "columnHeaders",
+                "headerAlignment",
+                DEFAULTS.columnHeaders.headerAlignment
             )
         },
         expandCollapse: {

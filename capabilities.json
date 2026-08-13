@@ -139,6 +139,16 @@
         "bold": { "displayName": "Bold", "type": { "bool": true } },
         "fontSize": { "displayName": "Font size", "type": { "numeric": true } },
         "wrapHeaderText": { "displayName": "Wrap header text", "type": { "bool": true } },
+        "headerAlignment": {
+          "displayName": "Header alignment",
+          "type": {
+            "enumeration": [
+              { "value": "left", "displayName": "Left" },
+              { "value": "center", "displayName": "Center" },
+              { "value": "right", "displayName": "Right" }
+            ]
+          }
+        },
         "indentPerLevel": { "displayName": "Indent per level (px)", "type": { "numeric": true } },
         "rowFontFamily": {
           "displayName": "Font family",
@@ -189,6 +199,16 @@
         "fontSize": { "displayName": "Font size", "type": { "numeric": true } },
         "showSortArrows": { "displayName": "Show sort arrows", "type": { "bool": true } },
         "wrapHeaderText": { "displayName": "Wrap header text", "type": { "bool": true } },
+        "headerAlignment": {
+          "displayName": "Header alignment",
+          "type": {
+            "enumeration": [
+              { "value": "left", "displayName": "Left" },
+              { "value": "center", "displayName": "Center" },
+              { "value": "right", "displayName": "Right" }
+            ]
+          }
+        },
         "columnFontFamily": {
           "displayName": "Font family",
           "type": {

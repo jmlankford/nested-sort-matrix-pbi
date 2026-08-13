@@ -217,6 +217,27 @@ export class SortManager {
 // Comparison primitives.
 // ---------------------------------------------------------------------------
 
+/**
+ * Layered, DETERMINISTIC text collation. `sensitivity: "base"` folds case and
+ * accents (and numeric collation treats "1.0" and "1" as equal), so two visibly
+ * distinct labels can compare equal and be left in engine order by the stable
+ * sort — which is why row-field sorts appeared to reorder only the apex level
+ * while deeper siblings (that happened to differ only by case/accent/format)
+ * stayed put. Fall through base -> variant -> raw code point so distinct strings
+ * always order.
+ */
+function collateLabel(a: string, b: string): number {
+    const base = a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    if (base !== 0) {
+        return base;
+    }
+    const variant = a.localeCompare(b, undefined, { numeric: true, sensitivity: "variant" });
+    if (variant !== 0) {
+        return variant;
+    }
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function compareNullableNumber(
     a: number | string | null | undefined,
     b: number | string | null | undefined
@@ -239,7 +260,7 @@ function compareNullableNumber(
     if (typeof a === "number" && typeof b === "number") {
         return a - b;
     }
-    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+    return collateLabel(String(a), String(b));
 }
 
 function comparePrimitive(
@@ -248,13 +269,16 @@ function comparePrimitive(
     aLabel: string,
     bLabel: string
 ): number {
-    const aNum = typeof aRaw === "number";
-    const bNum = typeof bRaw === "number";
-    if (aNum && bNum) {
-        return (aRaw as number) - (bRaw as number);
+    // True numeric / date fields order by their underlying value (2 before 10;
+    // chronological), but ONLY when the values actually differ — an equal raw
+    // must still fall through to the label so distinct labels never tie.
+    if (typeof aRaw === "number" && typeof bRaw === "number" && aRaw !== bRaw) {
+        return aRaw - bRaw;
     }
-    if (aRaw instanceof Date && bRaw instanceof Date) {
+    if (aRaw instanceof Date && bRaw instanceof Date && aRaw.getTime() !== bRaw.getTime()) {
         return aRaw.getTime() - bRaw.getTime();
     }
-    return aLabel.localeCompare(bLabel, undefined, { numeric: true, sensitivity: "base" });
+    // Everything else — text fields, mixed types, or equal raw values — orders by
+    // the DISPLAYED row label at every hierarchy level, deterministically.
+    return collateLabel(aLabel, bLabel);
 }

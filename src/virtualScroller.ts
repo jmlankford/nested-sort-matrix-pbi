@@ -110,6 +110,17 @@ export class VirtualScroller<T> {
     public setItems(items: T[]): void {
         this.items = items || [];
         this.updateSizerHeight();
+        // Clamp scrollTop to the new content: if the row set shrank, the current
+        // scroll offset may lie beyond the end, which would leave the scroller
+        // painting recycled rows from the old set. Clamping keeps the rendered
+        // window valid even before the browser reconciles the shorter sizer.
+        const max = Math.max(
+            0,
+            this.topOffset + this.items.length * this.rowHeight - (this.container.clientHeight || 0)
+        );
+        if ((this.container.scrollTop || 0) > max) {
+            this.container.scrollTop = max;
+        }
         this.update();
     }
 

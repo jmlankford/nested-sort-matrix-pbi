@@ -29,7 +29,8 @@ import {
     DisplayUnit,
     ExpandStyle,
     ColumnAlignment,
-    ColumnApplyTo
+    ColumnApplyTo,
+    HeaderAlignment
 } from "./settings";
 import { SortManager, SortDirection } from "./sortManager";
 import { VisualSelectionManager, ClickModifiers } from "./selectionManager";
@@ -44,6 +45,12 @@ const HEADER_ROW_HEIGHT = 30;
 const DEFAULT_ROW_HEIGHT = 28;
 const ASC_ARROW = "▲";
 const DESC_ARROW = "▼";
+
+/** Map a header alignment to the flex `justify-content` that positions the
+ *  label (and its adjacent sort arrow) as a group. */
+function justifyForAlign(a: HeaderAlignment): string {
+    return a === "center" ? "center" : a === "right" ? "flex-end" : "flex-start";
+}
 
 /** A persisted column width entry. `type` distinguishes row-field vs value columns. */
 export interface ColumnWidth {
@@ -145,6 +152,9 @@ export class Renderer {
     /** Height of the bottom header row (measure + row-field labels). Grows above
      *  HEADER_ROW_HEIGHT when header word-wrap is on and a label wraps. */
     private bottomRowHeight = HEADER_ROW_HEIGHT;
+    /** Per-line height used for wrapped header text; the rendered cell line-height
+     *  is set from this so the measured and computed heights agree exactly. */
+    private headerLineHeightPx = HEADER_ROW_HEIGHT;
     /** Reusable canvas 2d context for measuring wrapped header line counts. */
     private measureCanvas: HTMLCanvasElement | null = null;
     private rowHeight = DEFAULT_ROW_HEIGHT;
@@ -645,8 +655,11 @@ export class Renderer {
             return h;
         }
         const fontSize = colHdr.fontSize;
-        const lineHeight = Math.ceil(fontSize * 1.35);
-        const vPad = 8; // top+bottom breathing room so wrapped text isn't cramped
+        // Line height matches the wrapped cell's rendered line-height exactly (set
+        // in buildHeader from this same value) so the computed height has no slack.
+        const lineHeight = Math.ceil(fontSize * 1.3);
+        this.headerLineHeightPx = lineHeight;
+        const vPad = 4; // minimal top+bottom clearance for descenders (2px each side)
         // Header cells render in the column-header font (see .nsm-hcell CSS var).
         const font = `${colHdr.bold ? 700 : 400} ${fontSize}px ${colHdr.columnFontFamily}`;
         const HPAD = 16; // .nsm-hcell left+right padding
@@ -937,6 +950,8 @@ export class Renderer {
         this.headerEl.style.color = theme.headerForeground;
 
         const colHdr = input.settings.columnHeaders;
+        const colAlign = colHdr.headerAlignment;
+        const colJustify = justifyForAlign(colAlign);
 
         // --- Row-field header columns. ---
         // In tabular mode only level 0 stays a frozen sticky corner; levels 1+
@@ -944,6 +959,8 @@ export class Renderer {
         const isTabular = input.settings.rowHeaders.layoutMode === "tabular";
         const tabularLeafTop = t.columnHeader.pivotRows.length * HEADER_ROW_HEIGHT;
         const wrapRows = input.settings.rowHeaders.wrapHeaderText;
+        const rowAlign = input.settings.rowHeaders.headerAlignment;
+        const rowJustify = justifyForAlign(rowAlign);
         const count = this.rowFieldColumnCount;
         for (let level = 0; level < count; level++) {
             if (isTabular && level > 0) {
@@ -958,7 +975,9 @@ export class Renderer {
                     .style("top", tabularLeafTop + "px") // same row as value headers
                     .style("width", this.getRowFieldWidth(level) + "px")
                     .style("height", this.bottomRowHeight + "px")
-                    .style("line-height", wrapRows ? "1.3" : this.bottomRowHeight + "px")
+                    .style("line-height", wrapRows ? this.headerLineHeightPx + "px" : this.bottomRowHeight + "px")
+                    .style("justify-content", rowJustify)
+                    .style("text-align", rowAlign)
                     .style("font-weight", colHdr.bold ? "700" : "400")
                     .style("font-size", colHdr.fontSize + "px");
 
@@ -981,7 +1000,9 @@ export class Renderer {
                 .style("left", this.leftOffsets[level] + "px")
                 .style("width", this.getRowFieldWidth(level) + "px")
                 .style("height", this.headerHeight + "px")
-                .style("line-height", wrapRows ? "1.3" : this.headerHeight + "px")
+                .style("line-height", wrapRows ? this.headerLineHeightPx + "px" : this.headerHeight + "px")
+                .style("justify-content", rowJustify)
+                .style("text-align", rowAlign)
                 .style("background", theme.headerBackground)
                 .style("font-weight", colHdr.bold ? "700" : "400")
                 .style("font-size", colHdr.fontSize + "px");
@@ -1033,6 +1054,8 @@ export class Renderer {
                     .style("width", w + "px")
                     .style("height", HEADER_ROW_HEIGHT + "px")
                     .style("line-height", HEADER_ROW_HEIGHT + "px")
+                    .style("justify-content", colJustify)
+                    .style("text-align", colAlign)
                     .style("font-weight", colHdr.bold ? "700" : "400")
                     .style("font-size", colHdr.fontSize + "px");
                 cell.append("span").attr("class", "nsm-hlabel").text(c.label);
@@ -1064,7 +1087,9 @@ export class Renderer {
                 .style("top", leafTop + "px")
                 .style("width", this.leafWidths[colIndex] + "px")
                 .style("height", this.bottomRowHeight + "px")
-                .style("line-height", wrapCols ? "1.3" : this.bottomRowHeight + "px")
+                .style("line-height", wrapCols ? this.headerLineHeightPx + "px" : this.bottomRowHeight + "px")
+                .style("justify-content", colJustify)
+                .style("text-align", colAlign)
                 .style("font-weight", colHdr.bold ? "700" : "400")
                 .style("font-size", colHdr.fontSize + "px");
 

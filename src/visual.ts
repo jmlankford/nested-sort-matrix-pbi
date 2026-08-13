@@ -97,6 +97,11 @@ export class Visual implements IVisual {
     private prevRowNames: string[] | null = null;
     private prevValSig = "";
     private prevColSig = "";
+    /** Leaf row count of the previous host update. A change that is NOT a schema
+     *  change and NOT an expand/collapse (which anchors scroll) means the row set
+     *  changed via filter / slicer / data refresh — reset the scroller to the top
+     *  so it can't paint recycled rows from a scrollTop beyond the new content. */
+    private prevRowCount = -1;
 
     // Native expand/collapse (Phase 2). Expansion state is owned by the host and
     // reflected in each matrix node's isCollapsed flag — the visual keeps no local
@@ -342,17 +347,28 @@ export class Visual implements IVisual {
         // Render grid.
         this.renderer.render(this.buildRenderInput(result));
 
+        // Scroll behaviour for this host update. These paths are mutually
+        // exclusive; a header SORT never reaches update() (it re-renders in place
+        // via applySortToggle and keeps raw scrollTop), so sorting is unaffected.
         if (schemaChanged) {
+            // Rebind: reset to the top.
             this.renderer.scrollToTop();
-        }
-
-        // Restore scroll position across an expand/collapse re-render (Part C).
-        if (this.pendingAnchor) {
+        } else if (this.pendingAnchor) {
+            // Expand / collapse: keep the anchored node fixed in the viewport.
             this.renderer.restoreAnchor(this.pendingAnchor);
             if (!this.bulkOp) {
                 this.pendingAnchor = null;
             }
+        } else if (result.rowCount !== this.prevRowCount) {
+            // The row set changed with no schema change and no expand/collapse in
+            // flight — i.e. a cross-filter, slicer, or data refresh. The old
+            // scrollTop may exceed the new (often shorter) content, leaving the
+            // scroller painting recycled rows from the previous set until the user
+            // scrolls. Reset to the top so the sizer height, scrollTop, and
+            // rendered window all reflect the new row set immediately.
+            this.renderer.scrollToTop();
         }
+        this.prevRowCount = result.rowCount;
 
         // Status bar.
         this.statusBar.render({
@@ -1253,7 +1269,8 @@ export class Visual implements IVisual {
                 desc("rowHeaders", "fontSize"),
                 desc("rowHeaders", "indentPerLevel"),
                 desc("rowHeaders", "rowFontFamily"),
-                desc("rowHeaders", "wrapHeaderText")
+                desc("rowHeaders", "wrapHeaderText"),
+                desc("rowHeaders", "headerAlignment")
             ];
             cards.push({
                 uid: "card-rowHeaders",
@@ -1267,7 +1284,8 @@ export class Visual implements IVisual {
                             num("Font size", d[1], s.rowHeaders.fontSize),
                             num("Indent per level (px)", d[2], s.rowHeaders.indentPerLevel),
                             dropdown("Font family", d[3], s.rowHeaders.rowFontFamily),
-                            toggle("Wrap header text", d[4], s.rowHeaders.wrapHeaderText)
+                            toggle("Wrap header text", d[4], s.rowHeaders.wrapHeaderText),
+                            dropdown("Header alignment", d[5], s.rowHeaders.headerAlignment)
                         ]
                     }
                 ],
@@ -1302,7 +1320,8 @@ export class Visual implements IVisual {
                 desc("columnHeaders", "fontSize"),
                 desc("columnHeaders", "showSortArrows"),
                 desc("columnHeaders", "columnFontFamily"),
-                desc("columnHeaders", "wrapHeaderText")
+                desc("columnHeaders", "wrapHeaderText"),
+                desc("columnHeaders", "headerAlignment")
             ];
             cards.push({
                 uid: "card-columnHeaders",
@@ -1316,7 +1335,8 @@ export class Visual implements IVisual {
                             num("Font size", d[1], s.columnHeaders.fontSize),
                             toggle("Show sort arrows", d[2], s.columnHeaders.showSortArrows),
                             dropdown("Font family", d[3], s.columnHeaders.columnFontFamily),
-                            toggle("Wrap header text", d[4], s.columnHeaders.wrapHeaderText)
+                            toggle("Wrap header text", d[4], s.columnHeaders.wrapHeaderText),
+                            dropdown("Header alignment", d[5], s.columnHeaders.headerAlignment)
                         ]
                     }
                 ],
