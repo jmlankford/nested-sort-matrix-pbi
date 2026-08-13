@@ -526,6 +526,38 @@ export class Renderer {
         return { text: lines.join("\n"), count: extract.length };
     }
 
+    /**
+     * TEMP (Item B): diagnostic for the column-copy investigation. Reports the
+     * selection size, how many of those ids matched leaf columns, the extract row
+     * count and its level, and the first extract row's value for the first matched
+     * column — pinpointing whether the failure is a lost selection (sel:0), an id
+     * mismatch (cols:0), an empty extract (ext:0), or a genuinely blank value
+     * (v0:null/undef, e.g. an ISINSCOPE-guarded measure at the deepest grain).
+     */
+    public columnCopyDiag(selectedColIds: Set<string>): string {
+        const input = this.current;
+        if (!input) {
+            return "cc:no-input";
+        }
+        const t = input.transform;
+        let maxLevel = -1;
+        for (const r of this.lastDisplayRows) {
+            if ((r.kind === "leaf" || r.kind === "group") && r.level > maxLevel) {
+                maxLevel = r.level;
+            }
+        }
+        const extract = this.lastDisplayRows.filter(
+            (r) => (r.kind === "leaf" || r.kind === "group") && r.level === maxLevel
+        );
+        const cols = t.leafColumns.filter((c) => selectedColIds.has(c.id));
+        let v0 = "n/a";
+        if (extract.length > 0 && cols.length > 0) {
+            const raw = extract[0].node.values[cols[0].id];
+            v0 = raw === undefined ? "undef" : raw === null ? "null" : String(raw);
+        }
+        return `cc sel:${selectedColIds.size} cols:${cols.length} ext:${extract.length}@L${maxLevel} v0:${v0}`;
+    }
+
     /** Raw scroll offset in px. Used by the SORT path to preserve the exact
      *  fractional scroll position (a sort keeps row count + height, so the same
      *  pixel offset maps to the same place) rather than pinning a specific node. */
@@ -568,7 +600,12 @@ export class Renderer {
                 return;
             }
         }
-        this.scroller.setScrollTop(anchor.scrollTop);
+        // No anchored node survives in the new row set — the tree changed underneath
+        // us (a cross-filter / slicer / refresh, not an expand/collapse). Restoring
+        // the old raw scrollTop here would leave the viewport parked deep in the old
+        // data, painting recycled rows ("stuck on a child customer"). Reset to the
+        // top so the new row set shows from its start.
+        this.scroller.scrollToTop();
     }
 
     // -----------------------------------------------------------------------

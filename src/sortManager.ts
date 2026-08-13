@@ -50,6 +50,19 @@ export class SortManager {
     /** Direction for default pivot column ordering (label sort of col fields). */
     private columnDirection: SortDirection = "asc";
 
+    // TEMP (Item A) — diagnostics for the row-field-sort-depth investigation.
+    private diagActive = "-";
+    private diagCounts: number[] = []; // per depth: number of sibling arrays sorted
+    private diagKeys = ""; // first 3 comparison keys at depth 1
+
+    /** TEMP (Item A): compact readout of what the last sort pass actually did. */
+    public getSortDiag(): string {
+        const depths = this.diagCounts
+            .map((c, i) => `L${i}:${c || 0}`)
+            .join(",");
+        return `sd:${this.diagActive} d:[${depths}] k1:${this.diagKeys || "-"}`;
+    }
+
     public reset(): void {
         this.active = null;
         this.columnDirection = "asc";
@@ -118,6 +131,14 @@ export class SortManager {
     // -----------------------------------------------------------------------
 
     public applyNestedSort(result: TransformResult): void {
+        // TEMP (Item A): reset per-pass diagnostics.
+        this.diagCounts = [];
+        this.diagKeys = "";
+        this.diagActive = !this.active
+            ? "-"
+            : this.active.kind === "value"
+            ? `V${this.active.leafColId}`
+            : `R${this.active.level}`;
         if (!result.hasRowFields) {
             this.applyColumnOrder(result);
             return;
@@ -137,10 +158,26 @@ export class SortManager {
         node.children.forEach((c) => this.sortRecursive(c));
     }
 
-    private sortSiblings(siblings: RowTreeNode[], _level: number): void {
+    private sortSiblings(siblings: RowTreeNode[], level: number): void {
         const a = this.active;
         if (!a) {
             return; // no active sort -> preserve engine order
+        }
+        // TEMP (Item A): count that this depth's sibling array was visited/sorted,
+        // and capture the comparison keys of the first 3 siblings at depth 1 — the
+        // exact values the comparator extracts for non-apex nodes.
+        this.diagCounts[level] = (this.diagCounts[level] || 0) + 1;
+        if (level === 1 && !this.diagKeys && siblings.length > 1) {
+            const keyOf = (n: RowTreeNode): string => {
+                if (a.kind === "value") {
+                    const v = n.values[a.leafColId];
+                    return v === undefined ? "undef" : v === null ? "null" : String(v);
+                }
+                // Row-field: what comparePrimitive compares — raw value + label.
+                const rawType = n.rawValue === null ? "null" : typeof n.rawValue;
+                return `${n.label}#${rawType}:${n.rawValue}`;
+            };
+            this.diagKeys = "[" + siblings.slice(0, 3).map(keyOf).join(" , ") + "]";
         }
         siblings.sort((x, y) => {
             let c =

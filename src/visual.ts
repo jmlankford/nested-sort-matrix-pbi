@@ -395,7 +395,8 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: result.rowCount,
-            allExpanded: this.computeAllExpanded(result)
+            allExpanded: this.computeAllExpanded(result),
+            debug: this.sort.getSortDiag()
         });
 
         // Continue a bulk Expand All / Collapse All in progress (Part B global).
@@ -474,7 +475,8 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: this.lastTransform.rowCount,
-            allExpanded: this.computeAllExpanded(this.lastTransform)
+            allExpanded: this.computeAllExpanded(this.lastTransform),
+            debug: this.sort.getSortDiag()
         });
     }
 
@@ -559,12 +561,14 @@ export class Visual implements IVisual {
 
     /** Copy the selected value columns (deepest rendered level rows) as TSV. */
     private copyColumns(): void {
+        // TEMP (Item B): surface the copy-state diagnostic instead of the normal
+        // "Copied N rows" confirmation so the failure mode is visible on device.
+        const diag = this.renderer.columnCopyDiag(this.selectedColumnIds);
         const tsv = this.renderer.buildColumnCopyTSV(this.selectedColumnIds);
-        if (!tsv) {
-            this.statusBar.flash("Nothing to copy");
-            return;
+        if (tsv) {
+            copyText(tsv.text, (t) => this.manualCopy.show(t));
         }
-        this.doCopy(tsv.text, tsv.count);
+        this.statusBar.flash(diag, 6000);
     }
 
     /** Write text to the clipboard and flash a transient status confirmation. */
