@@ -22,8 +22,7 @@
     {
       "matrix": {
         "rows": {
-          "for": { "in": "rowFields" },
-          "dataReductionAlgorithm": { "window": { "count": 30000 } }
+          "for": { "in": "rowFields" }
         },
         "columns": {
           "for": { "in": "columnFields" }
