@@ -86,6 +86,10 @@ export class Visual implements IVisual {
     private readonly manualCopy: ManualCopyPanel;
     /** Value-column leaf ids currently selected for a column copy. */
     private selectedColumnIds = new Set<string>();
+    /** TEMP (Q2): per-level row-field header click counts, shown in the status bar
+     *  as rfclk:L<level>:<count> to prove whether child-header clicks fire. */
+    private rfClkCounts: number[] = [];
+    private rfClkLast = "";
     /** Document-level Ctrl+C / Escape handler (stored so it can be detached). */
     private readonly onKeyDown = (e: KeyboardEvent): void => {
         // Let native copy work inside text fields (rename inputs, manual-copy box).
@@ -396,7 +400,7 @@ export class Visual implements IVisual {
             sortText: this.sort.getStackText(80),
             rowCount: result.rowCount,
             allExpanded: this.computeAllExpanded(result),
-            debug: this.sort.getSortDiag()
+            debug: this.diagString()
         });
 
         // Continue a bulk Expand All / Collapse All in progress (Part B global).
@@ -419,8 +423,12 @@ export class Visual implements IVisual {
             specificColumnFor: (slot) => this.specificColumnBySlot.get(slot) || DEFAULTS.specificColumn,
             cfFor: (slot) => this.cfBySlot.get(slot) || DEFAULTS.cf,
             leafLabelFor: (col) => this.leafLabel(col),
-            onRowFieldSort: (level, label) =>
-                this.applySortToggle(() => this.sort.toggleRowField(level, label)),
+            onRowFieldSort: (level, label) => {
+                // TEMP (Q2): record that a row-field header click fired at this level.
+                this.rfClkCounts[level] = (this.rfClkCounts[level] || 0) + 1;
+                this.rfClkLast = `rfclk:L${level}:${this.rfClkCounts[level]}`;
+                this.applySortToggle(() => this.sort.toggleRowField(level, label));
+            },
             onValueSort: (leafColId, label) =>
                 this.applySortToggle(() => this.sort.toggleValue(leafColId, label)),
             onColumnSort: () => this.applySortToggle(() => this.sort.toggleColumnDirection()),
@@ -476,8 +484,14 @@ export class Visual implements IVisual {
             sortText: this.sort.getStackText(80),
             rowCount: this.lastTransform.rowCount,
             allExpanded: this.computeAllExpanded(this.lastTransform),
-            debug: this.sort.getSortDiag()
+            debug: this.diagString()
         });
+    }
+
+    /** TEMP (Item A + Q2): combined status-bar diagnostic. */
+    private diagString(): string {
+        const sd = this.sort.getSortDiag();
+        return this.rfClkLast ? `${sd}  ${this.rfClkLast}` : sd;
     }
 
     /** Re-render the body only (selection change) without recomputing layout. */
