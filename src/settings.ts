@@ -18,7 +18,7 @@
 import powerbi from "powerbi-visuals-api";
 import DataViewObjects = powerbi.DataViewObjects;
 import DataViewObject = powerbi.DataViewObject;
-import { CfRule, CfApplyTo } from "./cfPanel";
+import { CfRule, CfApplyTo } from "./cfTypes";
 
 // ---------------------------------------------------------------------------
 // Slot capacity constants — shared across the whole visual.

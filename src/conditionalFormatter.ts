@@ -17,7 +17,7 @@ import {
     CFIconTier,
     IconShape
 } from "./settings";
-import { CfRule, CfApplyTo, RuleOperator } from "./cfPanel";
+import { CfRule, CfApplyTo, RuleOperator } from "./cfTypes";
 import { LeafColumn, RowTreeNode } from "./dataTransformer";
 
 export interface DataBarFormat {

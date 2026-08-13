@@ -57,6 +57,11 @@ export class VisualSelectionManager {
         return this.selected.size > 0;
     }
 
+    /** Snapshot of the currently selected row-node keys (for clipboard copy). */
+    public getSelectedKeys(): Set<string> {
+        return new Set(this.selected);
+    }
+
     public isSelected(node: RowTreeNode): boolean {
         return this.selected.has(node.key);
     }

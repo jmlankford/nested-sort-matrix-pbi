@@ -634,233 +634,88 @@
     }
 }
 
-/* ---------------- Conditional Formatting panel ---------------- */
-.nsm-cf-panel {
+/* ---------------- Copy: column selection highlight ---------------- */
+.nsm-hcell-colselected {
+    box-shadow: inset 0 0 0 2px #118dff;
+    background: rgba(17, 141, 255, 0.10);
+}
+.nsm-cell-colselected {
+    background: rgba(17, 141, 255, 0.08);
+}
+
+/* ---------------- Copy: minimal right-click menu ---------------- */
+.nsm-ctxmenu {
     position: absolute;
-    right: 8px;
-    bottom: 32px; /* above status bar */
-    width: 360px;
-    max-height: 80%;
-    overflow-y: auto;
-    background: var(--nsm-background, #ffffff);
-    border: 1px solid rgba(0, 0, 0, 0.15);
+    z-index: 60;
+    min-width: 140px;
+    background: #ffffff;
+    border: 1px solid #d0cece;
     border-radius: 4px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-    z-index: 1000;
-    font-family: "Segoe UI", sans-serif;
-    font-size: 12px;
-    display: none;
-
-    &.nsm-cf-panel-open {
-        display: block;
-    }
-}
-
-.nsm-cf-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 12px 8px;
-    font-weight: 600;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+    padding: 4px 0;
     font-size: 13px;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-
-    .nsm-cf-close {
-        background: transparent;
-        border: none;
-        cursor: pointer;
-        font-size: 13px;
-        color: rgba(0, 0, 0, 0.55);
-        padding: 2px 6px;
-
-        &:hover {
-            color: rgba(0, 0, 0, 0.85);
-        }
-    }
+    color: #252423;
+    user-select: none;
 }
-
-.nsm-cf-panel-body {
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.nsm-cf-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-
-    label {
-        flex: 0 0 110px;
-        color: rgba(0, 0, 0, 0.6);
-    }
-
-    select {
-        font-size: 11px;
-        padding: 2px 4px;
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        border-radius: 2px;
-        height: 24px;
-    }
-}
-
-.nsm-cf-toggle-group {
-    display: inline-flex;
-    gap: 2px;
-
-    .nsm-cf-toggle {
-        font-size: 11px;
-        padding: 2px 8px;
-        height: 24px;
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        border-radius: 2px;
-        background: transparent;
-        cursor: pointer;
-
-        &.nsm-cf-toggle-active {
-            background: #0078d4;
-            color: #ffffff;
-            border-color: #0078d4;
-        }
-    }
-}
-
-.nsm-cf-dynamic {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.nsm-cf-rule-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
-
-    select,
-    input[type="text"],
-    input[type="number"] {
-        font-size: 11px;
-        padding: 2px 4px;
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        border-radius: 2px;
-        height: 24px;
-    }
-
-    input[type="text"] {
-        width: 60px;
-    }
-
-    .nsm-cf-rule-remove {
-        background: transparent;
-        border: none;
-        cursor: pointer;
-        color: rgba(0, 0, 0, 0.5);
-        font-size: 11px;
-
-        &:hover {
-            color: #d13438;
-        }
-    }
-}
-
-.nsm-cf-color-input {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    position: relative;
-
-    .nsm-cf-color-swatch {
-        width: 24px;
-        height: 24px;
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        border-radius: 2px;
-        cursor: pointer;
-        flex-shrink: 0;
-    }
-
-    input[type="text"] {
-        width: 80px;
-        font-size: 11px;
-        padding: 2px 4px;
-        border: 1px solid rgba(0, 0, 0, 0.2);
-        border-radius: 2px;
-        height: 24px;
-        font-family: "Courier New", monospace;
-
-        &.nsm-cf-hex-invalid {
-            border-color: #d13438;
-        }
-    }
-}
-
-.nsm-cf-panel-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 8px 12px 10px;
-    border-top: 1px solid rgba(0, 0, 0, 0.08);
-
-    button {
-        padding: 4px 16px;
-        font-size: 12px;
-        border-radius: 2px;
-        cursor: pointer;
-        border: 1px solid rgba(0, 0, 0, 0.2);
-
-        &.nsm-cf-btn-primary {
-            background: #0078d4;
-            color: white;
-            border-color: #0078d4;
-        }
-
-        &.nsm-cf-btn-secondary {
-            background: transparent;
-        }
-    }
-}
-
-.nsm-cf-add-rule {
-    font-size: 11px;
-    color: #0078d4;
+.nsm-ctxmenu-item {
+    padding: 6px 14px;
     cursor: pointer;
-    padding: 2px 0;
-    background: none;
-    border: none;
-    text-align: left;
-
-    &:hover {
-        text-decoration: underline;
-    }
-}
-
-.nsm-cf-and-btn {
-    font-size: 10px;
-    color: #0078d4;
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0 4px;
     white-space: nowrap;
 
     &:hover {
-        text-decoration: underline;
+        background: #f3f2f1;
     }
 }
 
-.nsm-cf-and-row {
+/* ---------------- Copy: manual-copy fallback panel ---------------- */
+.nsm-manualcopy-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 70;
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-left: 16px;
-    margin-top: 2px;
-    margin-bottom: 2px;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.25);
 }
+.nsm-manualcopy-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 80%;
+    max-width: 480px;
+    max-height: 70%;
+    padding: 14px;
+    background: #ffffff;
+    border: 1px solid #d0cece;
+    border-radius: 6px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+.nsm-manualcopy-hint {
+    font-size: 12px;
+    color: #605e5c;
+}
+.nsm-manualcopy-text {
+    flex: 1 1 auto;
+    min-height: 120px;
+    resize: none;
+    font-family: "Courier New", monospace;
+    font-size: 12px;
+    padding: 8px;
+    border: 1px solid #edebe9;
+    border-radius: 4px;
+    white-space: pre;
+    overflow: auto;
+}
+.nsm-manualcopy-close {
+    align-self: flex-end;
+    padding: 6px 16px;
+    border: none;
+    border-radius: 4px;
+    background: #118dff;
+    color: #ffffff;
+    cursor: pointer;
 
-.nsm-cf-and-label {
-    font-size: 10px;
-    font-weight: 600;
-    color: rgba(0, 0, 0, 0.5);
-    flex: 0 0 28px;
+    &:hover {
+        background: #0f7ae0;
+    }
 }

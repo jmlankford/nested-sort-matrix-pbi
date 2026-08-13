@@ -113,15 +113,17 @@ export interface RenderInput {
     /** Aggregate expand/collapse state of a level, for the header control's icon. */
     levelExpandState: (level: number) => LevelExpandState;
     onRowClick: (node: RowTreeNode, mods: ClickModifiers) => void;
-    /** Right-click on a ROW opens the host context menu (native Copy). */
+    /** Right-click on a ROW opens the visual's copy menu. */
     onRowContextMenu: (node: RowTreeNode, x: number, y: number) => void;
     onEmptyClick: () => void;
-    /** Right-click on a value column header opens the in-visual CF panel. */
-    onColumnRightClick: (slotIndex: number, displayName: string) => void;
     /** Restored persisted column widths (Fix 3D). */
     columnWidths: ColumnWidth[];
     /** Called when the user finishes resizing a column, to persist the widths. */
     onColumnWidthsChanged: (widths: ColumnWidth[]) => void;
+    /** Value-column leaf ids currently selected for copy (header + cell highlight). */
+    selectedColumnIds: Set<string>;
+    /** Right-click on a value column header: select the column and open the copy menu. */
+    onColumnHeaderContext: (colId: string, ctrl: boolean, x: number, y: number) => void;
 }
 
 type ValueFormatFn = (value: number | string | null) => string;
@@ -412,6 +414,117 @@ export class Renderer {
     // the viewport across an expand/collapse re-render, even when rows are
     // inserted or removed above it.
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Clipboard copy (TSV extraction from the rendered grid).
+    // -----------------------------------------------------------------------
+
+    /** Strip tabs/newlines so a cell can't break TSV column/row alignment. */
+    private tsvCell(s: string): string {
+        return (s || "").replace(/[\t\r\n]+/g, " ");
+    }
+
+    /** Formatted display string for a node's value in a column (matches cells). */
+    private formatValueForCopy(node: RowTreeNode, col: LeafColumn): string {
+        const raw = node.values[col.id];
+        const value = raw === undefined ? null : raw;
+        const formatter = this.valueFormatters.get(col.valueSlotIndex);
+        return formatter ? formatter(value) : value === null ? "" : String(value);
+    }
+
+    /** Label of the ancestor (or self) at a given DISPLAY level, else "". */
+    private labelAtLevel(node: RowTreeNode, level: number): string {
+        let n: RowTreeNode | undefined = node;
+        while (n && n.level > level) {
+            n = n.parent;
+        }
+        return n && n.level === level ? n.label : "";
+    }
+
+    /**
+     * TSV for the currently selected rows, in display order. Columns: the visible
+     * row-field ancestor labels (one per visible level) followed by every visible
+     * value column, using formatted display strings. A leading header row is
+     * included. Returns null when nothing is selected / matched.
+     */
+    public buildRowCopyTSV(selectedKeys: Set<string>): { text: string; count: number } | null {
+        const input = this.current;
+        if (!input || selectedKeys.size === 0) {
+            return null;
+        }
+        const t = input.transform;
+        const rowFieldCount = t.hasRowFields ? t.activeRowFields.length : 0;
+        const cols = t.leafColumns;
+        const rows = this.lastDisplayRows.filter((r) => r.node && selectedKeys.has(r.node.key));
+        if (rows.length === 0) {
+            return null;
+        }
+        const header: string[] = [];
+        for (let l = 0; l < rowFieldCount; l++) {
+            header.push(this.tsvCell(t.activeRowFields[l].displayName));
+        }
+        cols.forEach((c) => header.push(this.tsvCell(input.leafLabelFor(c))));
+        const lines: string[] = [header.join("\t")];
+        rows.forEach((r) => {
+            const cells: string[] = [];
+            for (let l = 0; l < rowFieldCount; l++) {
+                cells.push(this.tsvCell(this.labelAtLevel(r.node, l)));
+            }
+            cols.forEach((c) => cells.push(this.tsvCell(this.formatValueForCopy(r.node, c))));
+            lines.push(cells.join("\t"));
+        });
+        return { text: lines.join("\n"), count: rows.length };
+    }
+
+    /**
+     * TSV for the selected value columns. Rows are ONLY those at the deepest
+     * currently-RENDERED hierarchy level (leaves and collapsed groups at that
+     * level); parent rows above it and all subtotal / grand-total rows are
+     * excluded — a flat single-grain extract, not a copy of the on-screen tree.
+     * Each row carries its ancestor labels for every level up to that depth,
+     * followed by the selected value columns. Header row included.
+     */
+    public buildColumnCopyTSV(selectedColIds: Set<string>): { text: string; count: number } | null {
+        const input = this.current;
+        if (!input || selectedColIds.size === 0) {
+            return null;
+        }
+        const t = input.transform;
+        // Deepest rendered DATA level (exclude subtotal / grand-total rows).
+        let maxLevel = -1;
+        for (const r of this.lastDisplayRows) {
+            if ((r.kind === "leaf" || r.kind === "group") && r.level > maxLevel) {
+                maxLevel = r.level;
+            }
+        }
+        if (maxLevel < 0) {
+            return null;
+        }
+        const extract = this.lastDisplayRows.filter(
+            (r) => (r.kind === "leaf" || r.kind === "group") && r.level === maxLevel
+        );
+        const cols = t.leafColumns.filter((c) => selectedColIds.has(c.id));
+        if (extract.length === 0 || cols.length === 0) {
+            return null;
+        }
+        const rowFieldCount = t.hasRowFields ? Math.min(t.activeRowFields.length, maxLevel + 1) : 0;
+        const header: string[] = [];
+        for (let l = 0; l < rowFieldCount; l++) {
+            const f = t.activeRowFields[l];
+            header.push(this.tsvCell(f ? f.displayName : ""));
+        }
+        cols.forEach((c) => header.push(this.tsvCell(input.leafLabelFor(c))));
+        const lines: string[] = [header.join("\t")];
+        extract.forEach((r) => {
+            const cells: string[] = [];
+            for (let l = 0; l < rowFieldCount; l++) {
+                cells.push(this.tsvCell(this.labelAtLevel(r.node, l)));
+            }
+            cols.forEach((c) => cells.push(this.tsvCell(this.formatValueForCopy(r.node, c))));
+            lines.push(cells.join("\t"));
+        });
+        return { text: lines.join("\n"), count: extract.length };
+    }
 
     /** Raw scroll offset in px. Used by the SORT path to preserve the exact
      *  fractional scroll position (a sort keeps row count + height, so the same
@@ -1083,6 +1196,7 @@ export class Renderer {
                 .classed("nsm-hcell-subtotal", col.isColSubtotal)
                 .classed("nsm-hcell-grandtotal", col.isColGrandTotal)
                 .classed("nsm-hcell-wrap", wrapCols)
+                .classed("nsm-hcell-colselected", input.selectedColumnIds.has(col.id))
                 .style("left", this.leafLefts[colIndex] + "px")
                 .style("top", leafTop + "px")
                 .style("width", this.leafWidths[colIndex] + "px")
@@ -1140,11 +1254,11 @@ export class Renderer {
             const cellNode = cell.node() as HTMLElement;
             this.appendResizeHandle(cellNode, colIndex);
 
-            // Right-click opens the in-visual conditional-formatting panel.
+            // Right-click selects the column for copy and opens the copy menu.
             cellNode.addEventListener("contextmenu", (e: MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
-                input.onColumnRightClick(col.valueSlotIndex, input.leafLabelFor(col));
+                input.onColumnHeaderContext(col.id, e.ctrlKey || e.metaKey, e.clientX, e.clientY);
             });
         });
     }
@@ -1295,9 +1409,8 @@ export class Renderer {
             el.onclick = null;
         }
 
-        // Right-click on the row opens the host context menu (native Copy).
-        // Value column HEADER right-click (CF panel) is bound elsewhere; row-body
-        // right-click is free.
+        // Right-click on the row opens the visual's own copy menu. Value column
+        // HEADER right-click (column copy) is bound on the header cell.
         el.oncontextmenu = (e: MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1456,6 +1569,9 @@ export class Renderer {
     ): HTMLElement {
         const cell = document.createElement("div");
         cell.className = "nsm-cell nsm-cell-value";
+        if (input.selectedColumnIds.has(col.id)) {
+            cell.classList.add("nsm-cell-colselected");
+        }
         const width = this.leafWidths[colIndex] !== undefined ? this.leafWidths[colIndex] : DEFAULT_COL_WIDTH;
         cell.style.position = "absolute";
         cell.style.left = this.leafLefts[colIndex] + "px";

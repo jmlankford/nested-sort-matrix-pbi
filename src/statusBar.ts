@@ -31,6 +31,8 @@ export class StatusBar {
     private readonly rowCountLabel: HTMLElement;
     private allExpanded = false;
     private visible = true;
+    private lastRowCount = 0;
+    private flashTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(container: HTMLElement, private readonly callbacks: StatusBarCallbacks) {
         this.root = document.createElement("div");
@@ -105,7 +107,26 @@ export class StatusBar {
             this.sortLabel.title = "";
         }
 
+        this.lastRowCount = state.rowCount;
+        // A render supersedes any in-flight flash message.
+        if (this.flashTimer !== null) {
+            clearTimeout(this.flashTimer);
+            this.flashTimer = null;
+        }
         this.rowCountLabel.textContent = formatCount(state.rowCount) + " rows";
+    }
+
+    /** Show a transient confirmation (e.g. "Copied 14 rows") in the row-count slot,
+     *  restoring the row count after a short delay. */
+    public flash(message: string, ms: number = 2500): void {
+        this.rowCountLabel.textContent = message;
+        if (this.flashTimer !== null) {
+            clearTimeout(this.flashTimer);
+        }
+        this.flashTimer = setTimeout(() => {
+            this.flashTimer = null;
+            this.rowCountLabel.textContent = formatCount(this.lastRowCount) + " rows";
+        }, ms);
     }
 
     public destroy(): void {

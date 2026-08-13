@@ -60,7 +60,8 @@ import { VisualSelectionManager } from "./selectionManager";
 import { StatusBar } from "./statusBar";
 import { ConfigPanel, ConfigModel, SlotEntry, ConfigRole } from "./configPanel";
 import { Renderer, RenderInput, ThemeColors, ColumnWidth, ScrollAnchor, LevelExpandState } from "./renderer";
-import { CfPanel, CfPanelState, CfType, CfApplyTo } from "./cfPanel";
+import { ContextMenu } from "./contextMenu";
+import { copyText, ManualCopyPanel } from "./clipboard";
 
 interface PersistedSlot {
     i: number; // slot index
@@ -81,7 +82,27 @@ export class Visual implements IVisual {
     private readonly renderer: Renderer;
     private readonly statusBar: StatusBar;
     private readonly configPanel: ConfigPanel;
-    private readonly cfPanel: CfPanel;
+    private readonly contextMenu: ContextMenu;
+    private readonly manualCopy: ManualCopyPanel;
+    /** Value-column leaf ids currently selected for a column copy. */
+    private selectedColumnIds = new Set<string>();
+    /** Document-level Ctrl+C / Escape handler (stored so it can be detached). */
+    private readonly onKeyDown = (e: KeyboardEvent): void => {
+        // Let native copy work inside text fields (rename inputs, manual-copy box).
+        const tag = (e.target as HTMLElement | null)?.tagName;
+        const inTextField = tag === "INPUT" || tag === "TEXTAREA";
+        if (!inTextField && (e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+            if (this.selectedColumnIds.size > 0) {
+                e.preventDefault();
+                this.copyColumns();
+            } else if (this.selection.hasSelection()) {
+                e.preventDefault();
+                this.copyRows();
+            }
+        } else if (e.key === "Escape" && !inTextField) {
+            this.clearCopySelection();
+        }
+    };
     private readonly sort = new SortManager();
     private readonly selection: VisualSelectionManager;
     private readonly hostSelectionManager: ISelectionManager;
@@ -138,6 +159,10 @@ export class Visual implements IVisual {
         this.host = options.host;
         this.target = options.element;
         this.target.classList.add("nsm-root");
+        // Focusable so the visual receives Ctrl+C / Escape key events for copy.
+        if (!this.target.hasAttribute("tabindex")) {
+            this.target.setAttribute("tabindex", "0");
+        }
 
         this.hostSelectionManager = this.host.createSelectionManager();
 
@@ -179,20 +204,14 @@ export class Visual implements IVisual {
             onClose: () => undefined
         });
 
-        this.cfPanel = new CfPanel(this.target, (slotIndex, state) => {
-            this.saveCfState(slotIndex, state);
-        });
+        this.contextMenu = new ContextMenu(this.target);
+        this.manualCopy = new ManualCopyPanel(this.target);
 
-        // Click outside the CF panel closes it. composedPath() captures the
-        // event path at dispatch time, so the check stays correct even when a
-        // panel re-render detaches the clicked node before the event bubbles here.
-        this.target.addEventListener("click", (e: MouseEvent) => {
-            if (!this.cfPanel.isOpen()) return;
-            const path = e.composedPath();
-            const overlayEl = this.cfPanel.getOverlayElement();
-            if (overlayEl && path.includes(overlayEl)) return; // click originated inside panel
-            this.cfPanel.close();
-        });
+        // Keyboard: Ctrl/Cmd+C copies the current selection (columns take priority
+        // over rows when both exist); Escape clears row + column selection. Attached
+        // at document level (scoped to the visual's own sandboxed iframe) so it fires
+        // whenever the visual has focus, without needing a specific element focused.
+        document.addEventListener("keydown", this.onKeyDown, true);
     }
 
     // -----------------------------------------------------------------------
@@ -271,6 +290,7 @@ export class Visual implements IVisual {
             // refreshes its label, so a field add leaves the current sort untouched
             // (and leaves the visual unsorted when nothing was active).
             this.selection.reset();
+            this.selectedColumnIds = new Set();
             this.bulkOp = null;
             this.pendingAnchor = null;
             this.config = this.reconcileConfig(discovered, this.parsePersisted(this.settings.configState));
@@ -411,98 +431,10 @@ export class Visual implements IVisual {
             onEmptyClick: () => this.selection.clearSelection(),
             columnWidths: this.columnWidths,
             onColumnWidthsChanged: (widths) => this.persistColumnWidths(widths),
-            onColumnRightClick: (slotIndex, displayName) => {
-                const currentState = this.buildCfPanelState(slotIndex);
-                this.cfPanel.setAvailableMeasures(
-                    this.activeValueFields.map((f) => ({
-                        slotIndex: f.slotIndex,
-                        displayName: f.displayName
-                    }))
-                );
-                this.cfPanel.open(slotIndex, displayName, currentState);
-            }
+            selectedColumnIds: this.selectedColumnIds,
+            onColumnHeaderContext: (colId, ctrl, x, y) =>
+                this.handleColumnHeaderContext(colId, ctrl, x, y)
         };
-    }
-
-    /** Convert the current per-slot CF settings into a CfPanelState for the panel. */
-    private buildCfPanelState(slotIndex: number): CfPanelState {
-        const cf = this.cfBySlot.get(slotIndex) || DEFAULTS.cf;
-        const panelType: CfType =
-            cf.cfType === "colorScale" || cf.cfType === "rules" || cf.cfType === "fieldValue"
-                ? cf.cfType
-                : "none";
-        return {
-            cfType: panelType,
-            applyTo: cf.cfApplyTo,
-            applyToTotals: cf.applyToTotals,
-            colorScale: {
-                lowColor: cf.csLowColor,
-                useMid: cf.csUseMid,
-                midColor: cf.csMidColor,
-                highColor: cf.csHighColor,
-                basis: cf.csBasis
-            },
-            rules: cf.rulesV2 ? cf.rulesV2.map((r) => ({ ...r })) : [],
-            defaultColor: cf.defaultColor || "",
-            fieldValue: {
-                measureSlotIndex: cf.fieldValueSlot,
-                applyAs: cf.fieldValueApplyAs
-            }
-        };
-    }
-
-    /** Persist the CF panel state to the per-column cfSettings object. */
-    private saveCfState(slotIndex: number, state: CfPanelState): void {
-        const field = this.activeValueFields.find((f) => f.slotIndex === slotIndex);
-        if (!field) {
-            return;
-        }
-
-        // Apply immediately to in-memory state and repaint — do not wait for the
-        // host's persistProperties round-trip, which may be treated as a lightweight
-        // update or read from a stale DataView.
-        const current = this.cfBySlot.get(slotIndex) ?? { ...DEFAULTS.cf };
-        this.cfBySlot.set(slotIndex, {
-            ...current,
-            cfType: state.cfType,
-            cfApplyTo: state.applyTo,
-            applyToTotals: state.applyToTotals,
-            csBasis: state.colorScale.basis,
-            csLowColor: state.colorScale.lowColor,
-            csUseMid: state.colorScale.useMid,
-            csMidColor: state.colorScale.midColor,
-            csHighColor: state.colorScale.highColor,
-            rulesV2: state.rules.map(r => ({ ...r })),
-            defaultColor: state.defaultColor,
-            fieldValueSlot: state.fieldValue.measureSlotIndex,
-            fieldValueApplyAs: state.fieldValue.applyAs
-        });
-        this.cfPendingConfirm.set(slotIndex, JSON.stringify(this.cfBySlot.get(slotIndex)));
-        this.rerender(true);
-
-        const objects: powerbi.VisualObjectInstancesToPersist = {
-            merge: [
-                {
-                    objectName: "cfSettings",
-                    selector: { metadata: field.queryName },
-                    properties: {
-                        cfType: state.cfType,
-                        cfApplyTo: state.applyTo as CfApplyTo,
-                        applyToTotals: state.applyToTotals,
-                        csBasis: state.colorScale.basis,
-                        csLowColor: { solid: { color: state.colorScale.lowColor } },
-                        csUseMid: state.colorScale.useMid,
-                        csMidColor: { solid: { color: state.colorScale.midColor } },
-                        csHighColor: { solid: { color: state.colorScale.highColor } },
-                        rulesV2: JSON.stringify(state.rules),
-                        defaultColor: state.defaultColor,
-                        fieldValueSlot: state.fieldValue.measureSlotIndex,
-                        fieldValueApplyAs: state.fieldValue.applyAs
-                    }
-                }
-            ]
-        };
-        this.host.persistProperties(objects);
     }
 
     /**
@@ -577,25 +509,81 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Show the host context menu for a row (Item 3), giving native Copy options.
-     * dataRoles must be supplied because the visual declares drilldown/expandCollapse;
-     * for a row node that role is "rowFields".
+     * Right-click on a row: open the visual's own minimal copy menu. Cell-level
+     * Copy is not available from the host context menu for custom visuals, so we
+     * build TSV ourselves. Right-click does NOT alter the row selection or emit a
+     * cross-filter; "Copy selection" copies the current selection, or just the
+     * right-clicked row when nothing is selected.
      */
     private showRowContextMenu(node: RowTreeNode, x: number, y: number): void {
-        const id = node.selectionId || this.buildMatrixSelectionId(node);
-        if (!id) {
+        this.contextMenu.open(
+            [{ label: "Copy selection", action: () => this.copyRows(node) }],
+            x,
+            y
+        );
+    }
+
+    /**
+     * Right-click on a value column header: select the column for copy (Ctrl adds
+     * to a multi-column set; plain replaces), repaint the highlight, and open the
+     * copy menu. Left-click still sorts, so right-click is free for this.
+     */
+    private handleColumnHeaderContext(colId: string, ctrl: boolean, x: number, y: number): void {
+        if (ctrl) {
+            this.selectedColumnIds.add(colId);
+        } else if (!(this.selectedColumnIds.size === 1 && this.selectedColumnIds.has(colId))) {
+            this.selectedColumnIds = new Set([colId]);
+        }
+        this.rerender(false); // repaint header + cell highlight
+        const many = this.selectedColumnIds.size > 1;
+        this.contextMenu.open(
+            [{ label: many ? "Copy columns" : "Copy column", action: () => this.copyColumns() }],
+            x,
+            y
+        );
+    }
+
+    /** Copy the selected rows (or the right-clicked row) as TSV. */
+    private copyRows(contextNode?: RowTreeNode): void {
+        let keys = this.selection.getSelectedKeys();
+        if (keys.size === 0 && contextNode) {
+            keys = new Set([contextNode.key]);
+        }
+        const tsv = this.renderer.buildRowCopyTSV(keys);
+        if (!tsv) {
+            this.statusBar.flash("Nothing to copy");
             return;
         }
-        // Right-click must NOT alter selection (no cross-filter side effect). We
-        // simply open the host context menu for this data point. NOTE: "Copy value"
-        // / "Copy selection" are not part of the custom-visual context-menu surface
-        // (they are exclusive to first-party visuals); custom visuals get the
-        // standard menu (Visual options plus Include/Exclude/Show-as-table for a
-        // recognized data point). See the notes in the commit / report.
-        try {
-            void this.hostSelectionManager.showContextMenu(id, { x, y }, "rowFields");
-        } catch {
-            /* ignore host errors so the UI stays responsive */
+        this.doCopy(tsv.text, tsv.count);
+    }
+
+    /** Copy the selected value columns (deepest rendered level rows) as TSV. */
+    private copyColumns(): void {
+        const tsv = this.renderer.buildColumnCopyTSV(this.selectedColumnIds);
+        if (!tsv) {
+            this.statusBar.flash("Nothing to copy");
+            return;
+        }
+        this.doCopy(tsv.text, tsv.count);
+    }
+
+    /** Write text to the clipboard and flash a transient status confirmation. */
+    private doCopy(text: string, rowCount: number): void {
+        const result = copyText(text, (t) => this.manualCopy.show(t));
+        if (result === "copied") {
+            this.statusBar.flash(`Copied ${rowCount} row${rowCount === 1 ? "" : "s"}`);
+        }
+    }
+
+    /** Escape: clear row and column copy selection and dismiss any popups. */
+    private clearCopySelection(): void {
+        this.contextMenu.close();
+        this.manualCopy.close();
+        const hadCols = this.selectedColumnIds.size > 0;
+        this.selectedColumnIds = new Set();
+        this.selection.clearSelection();
+        if (hadCols) {
+            this.rerender(false);
         }
     }
 
@@ -1594,6 +1582,9 @@ export class Visual implements IVisual {
         this.renderer.destroy();
         this.statusBar.destroy();
         this.configPanel.destroy();
+        this.contextMenu.close();
+        this.manualCopy.close();
+        document.removeEventListener("keydown", this.onKeyDown, true);
     }
 }
 
