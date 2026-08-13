@@ -1,19 +1,22 @@
 /*
  * sortManager.ts
  * --------------
- * Owns nested (hierarchical) sort state and applies it scoped WITHIN parent
- * groups — the primary differentiator from the stock matrix. A value-column
- * sort orders the children of every group at every level by that column within
- * each parent's scope (not a global flat sort). A row-field sort orders the
- * groups at one specific hierarchy level within their parent scope.
+ * Owns the visual's SINGLE active sort and applies it scoped WITHIN parent
+ * groups at EVERY hierarchy level — stock Power BI matrix behaviour.
  *
- * Click cycle per column: none -> ascending -> descending -> none.
- * Sorting a higher-level row field resets sort state on all deeper levels
- * (Excel PivotTable behaviour).
+ * There is exactly one active sort at a time (or none). Clicking any column
+ * header — a value column OR a row-field column — makes that column the active
+ * sort, replacing whatever was active. There is no priority stack.
+ *   - A value sort orders every group's children (at every level) by that value
+ *     column's aggregate, within each parent's scope.
+ *   - A row-field sort orders every level's siblings by their own row label
+ *     (rawValue), within each parent's scope; the indicator shows on the clicked
+ *     header only.
+ * Click cycle on the SAME column: ascending -> descending -> clear. Clicking a
+ * different column starts fresh at ascending.
  *
- * Sort state lives in this instance for the visual's lifetime, so it survives
- * cross-filter updates and re-renders. The visual resets it on a full data
- * refresh (schema change).
+ * Sort state lives for the visual's lifetime and survives cross-filter updates,
+ * re-renders, AND field add/remove (it is only cleared by reset()).
  */
 
 import {
@@ -27,13 +30,13 @@ import PrimitiveValue = powerbi.PrimitiveValue;
 
 export type SortDirection = "asc" | "desc";
 
-interface SortEntry {
+interface ActiveSort {
     kind: "rowField" | "value";
-    /** Row hierarchy level (rowField entries only). */
+    /** Row hierarchy level of the clicked header (rowField only; -1 for value). */
     level: number;
-    /** Leaf column id (value entries only). */
+    /** Leaf column id (value only; "" for rowField). */
     leafColId: string;
-    /** Display label for the sort-stack summary. */
+    /** Display label for the status-bar summary. */
     label: string;
     direction: SortDirection;
 }
@@ -42,7 +45,8 @@ const ASC_ARROW = "↑";
 const DESC_ARROW = "↓";
 
 export class SortManager {
-    private stack: SortEntry[] = [];
+    /** The single active sort, or null when nothing is sorted. */
+    private active: ActiveSort | null = null;
     /** Direction for default pivot column ordering (label sort of col fields). */
     private columnDirection: SortDirection = "asc";
     /** TEMP (Item A): per-depth {sorted,changed} counts from the last sort pass. */
@@ -52,23 +56,22 @@ export class SortManager {
     private srtkDone = false;
 
     public reset(): void {
-        this.stack = [];
+        this.active = null;
         this.columnDirection = "asc";
     }
 
     public isEmpty(): boolean {
-        return this.stack.length === 0;
+        return this.active === null;
     }
 
-    /** TEMP: compact sort-state token for the status-bar DBG readout (Item B). */
+    /** TEMP: compact sort-state token for the status-bar DBG readout. */
     public getDebugToken(): string {
-        if (this.stack.length === 0) {
+        if (!this.active) {
             return "srt:-";
         }
-        const parts = this.stack.map((e) =>
-            e.kind === "value" ? `v${e.leafColId}:${e.direction}` : `r${e.level}:${e.direction}`
-        );
-        let s = parts.join(",");
+        const a = this.active;
+        const key = a.kind === "value" ? `v${a.leafColId}` : `r${a.level}`;
+        let s = `${key}:${a.direction}`;
         if (s.length > 40) {
             s = s.slice(0, 40) + "…";
         }
@@ -76,41 +79,26 @@ export class SortManager {
     }
 
     // -----------------------------------------------------------------------
-    // Toggle handlers (called from header clicks).
+    // Toggle handlers (called from header clicks). One active sort at a time.
     // -----------------------------------------------------------------------
 
-    /**
-     * Cycle the sort on a row-field column at `level`. Resets sorts on all
-     * deeper levels and clears value sorts (which are inner-scoped).
-     */
+    /** Make (or cycle) a row-field column the active sort. */
     public toggleRowField(level: number, label: string): void {
-        // Find an existing entry for this exact level.
-        const idx = this.stack.findIndex((e) => e.kind === "rowField" && e.level === level);
-        const current = idx >= 0 ? this.stack[idx].direction : undefined;
-
-        // Reset deeper-level row sorts and all value sorts.
-        this.stack = this.stack.filter(
-            (e) => e.kind === "rowField" && e.level < level
-        );
-
-        const next = this.nextDirection(current);
-        if (next) {
-            this.stack.push({ kind: "rowField", level, leafColId: "", label, direction: next });
+        if (this.active && this.active.kind === "rowField" && this.active.level === level) {
+            const next = this.cycle(this.active.direction);
+            this.active = next ? { ...this.active, direction: next } : null;
+        } else {
+            this.active = { kind: "rowField", level, leafColId: "", label, direction: "asc" };
         }
     }
 
-    /** Cycle the sort on a value column (applies within every parent scope). */
+    /** Make (or cycle) a value column the active sort. */
     public toggleValue(leafColId: string, label: string): void {
-        const idx = this.stack.findIndex((e) => e.kind === "value" && e.leafColId === leafColId);
-        const current = idx >= 0 ? this.stack[idx].direction : undefined;
-
-        if (idx >= 0) {
-            this.stack.splice(idx, 1);
-        }
-
-        const next = this.nextDirection(current);
-        if (next) {
-            this.stack.push({ kind: "value", level: -1, leafColId, label, direction: next });
+        if (this.active && this.active.kind === "value" && this.active.leafColId === leafColId) {
+            const next = this.cycle(this.active.direction);
+            this.active = next ? { ...this.active, direction: next } : null;
+        } else {
+            this.active = { kind: "value", level: -1, leafColId, label, direction: "asc" };
         }
     }
 
@@ -123,36 +111,29 @@ export class SortManager {
         return this.columnDirection;
     }
 
-    private nextDirection(current: SortDirection | undefined): SortDirection | undefined {
-        if (current === undefined) {
-            return "asc";
-        }
-        if (current === "asc") {
-            return "desc";
-        }
-        return undefined; // desc -> none
+    /** Same-column click cycle: asc -> desc -> clear. */
+    private cycle(current: SortDirection): SortDirection | undefined {
+        return current === "asc" ? "desc" : undefined;
     }
 
     // -----------------------------------------------------------------------
-    // Query helpers (for header arrow rendering).
+    // Query helpers (for header arrow rendering) — only the active column.
     // -----------------------------------------------------------------------
 
     public directionForRowField(level: number): SortDirection | undefined {
-        const e = this.stack.find((x) => x.kind === "rowField" && x.level === level);
-        return e ? e.direction : undefined;
+        return this.active && this.active.kind === "rowField" && this.active.level === level
+            ? this.active.direction
+            : undefined;
     }
 
     public directionForValue(leafColId: string): SortDirection | undefined {
-        const e = this.stack.find((x) => x.kind === "value" && x.leafColId === leafColId);
-        return e ? e.direction : undefined;
-    }
-
-    public priorityForValue(leafColId: string): number {
-        return this.stack.findIndex((x) => x.kind === "value" && x.leafColId === leafColId);
+        return this.active && this.active.kind === "value" && this.active.leafColId === leafColId
+            ? this.active.direction
+            : undefined;
     }
 
     // -----------------------------------------------------------------------
-    // Apply nested sort to a transform result (mutates children arrays).
+    // Apply the active sort to a transform result (mutates children arrays).
     // -----------------------------------------------------------------------
 
     public applyNestedSort(result: TransformResult): void {
@@ -202,33 +183,23 @@ export class SortManager {
     }
 
     private sortSiblings(siblings: RowTreeNode[], level: number): void {
-        const applicable = this.stack.filter(
-            (e) => e.kind === "value" || (e.kind === "rowField" && e.level === level)
-        );
-        if (applicable.length === 0) {
-            return; // preserve first-seen order
+        const a = this.active;
+        if (!a) {
+            return; // no active sort -> preserve engine order
         }
         // TEMP (Item A): record whether this sibling array actually reordered.
-        const before = siblings.length > 1 ? siblings.map((s) => s.key).join("") : "";
-        siblings.sort((a, b) => {
-            for (let i = 0; i < applicable.length; i++) {
-                const e = applicable[i];
-                let c = 0;
-                if (e.kind === "value") {
-                    c = compareNullableNumber(a.values[e.leafColId], b.values[e.leafColId]);
-                } else {
-                    c = comparePrimitive(a.rawValue, b.rawValue, a.label, b.label);
-                }
-                if (e.direction === "desc") {
-                    c = -c;
-                }
-                if (c !== 0) {
-                    return c;
-                }
+        const before = siblings.length > 1 ? siblings.map((s) => s.key).join("\u0001") : "";
+        siblings.sort((x, y) => {
+            let c =
+                a.kind === "value"
+                    ? compareNullableNumber(x.values[a.leafColId], y.values[a.leafColId])
+                    : comparePrimitive(x.rawValue, y.rawValue, x.label, y.label);
+            if (a.direction === "desc") {
+                c = -c;
             }
-            return 0;
+            return c;
         });
-        const after = siblings.length > 1 ? siblings.map((s) => s.key).join("") : "";
+        const after = siblings.length > 1 ? siblings.map((s) => s.key).join("\u0001") : "";
         const st = this.lastSortStats[level] || { sorted: 0, changed: 0 };
         st.sorted++;
         if (before !== after) {
@@ -238,19 +209,16 @@ export class SortManager {
 
         // TEMP (Item A): capture the first multi-sibling depth-1 array's value-sort
         // key and its first 3 resolved (post-sort) values.
-        if (level === 1 && !this.srtkDone && siblings.length > 1) {
-            const ve = applicable.find((e) => e.kind === "value");
-            if (ve) {
-                const fmt = (v: number | string | null | undefined): string =>
-                    v === null || v === undefined
-                        ? "null"
-                        : typeof v === "string"
-                        ? `"${v}"`
-                        : String(v);
-                const vals = siblings.slice(0, 3).map((s) => fmt(s.values[ve.leafColId]));
-                this.srtkToken = `srtk:${ve.leafColId} vals:[${vals.join(",")}]`;
-                this.srtkDone = true;
-            }
+        if (level === 1 && !this.srtkDone && siblings.length > 1 && a.kind === "value") {
+            const fmt = (v: number | string | null | undefined): string =>
+                v === null || v === undefined
+                    ? "null"
+                    : typeof v === "string"
+                    ? `"${v}"`
+                    : String(v);
+            const vals = siblings.slice(0, 3).map((s) => fmt(s.values[a.leafColId]));
+            this.srtkToken = `srtk:${a.leafColId} vals:[${vals.join(",")}]`;
+            this.srtkDone = true;
         }
     }
 
@@ -270,17 +238,15 @@ export class SortManager {
     }
 
     // -----------------------------------------------------------------------
-    // Sort-stack summary text for the status bar.
+    // Active-sort summary text for the status bar.
     // -----------------------------------------------------------------------
 
     public getStackText(maxChars: number = 80): string {
-        if (this.stack.length === 0) {
+        if (!this.active) {
             return "";
         }
-        const parts = this.stack.map(
-            (e) => `${e.label} ${e.direction === "asc" ? ASC_ARROW : DESC_ARROW}`
-        );
-        let text = parts.join(" → ");
+        const arrow = this.active.direction === "asc" ? ASC_ARROW : DESC_ARROW;
+        let text = `${this.active.label} ${arrow}`;
         if (text.length > maxChars) {
             text = text.substring(0, Math.max(0, maxChars - 1)) + "…";
         }
@@ -288,41 +254,30 @@ export class SortManager {
     }
 
     /**
-     * Rebuild any stale labels after a rename / re-transform so the stack text
-     * stays in sync with current field display names. Entries whose target no
-     * longer exists are dropped.
+     * Refresh the active sort's display label after a rename / re-transform. The
+     * active sort is KEPT even when its target column/level is temporarily absent
+     * (collapsed hierarchy) or after a field add/remove — it re-applies when the
+     * target returns; only reset() clears it.
      */
     public reconcile(
         activeRowFields: FieldMeta[],
         leafColumns: LeafColumn[],
         leafLabel: (col: LeafColumn) => string
     ): void {
-        const rowByLevel = new Map<number, FieldMeta>();
-        activeRowFields.forEach((f, idx) => rowByLevel.set(idx, f));
-        const leafById = new Map<string, LeafColumn>();
-        leafColumns.forEach((c) => leafById.set(c.id, c));
-
-        // Refresh labels for entries whose target is currently present. Entries
-        // whose level/column is only TEMPORARILY absent are KEPT, not dropped: a
-        // collapsed hierarchy projects fewer row levels, so dropping a deeper
-        // row-field sort here caused the sort to silently die across expand/collapse
-        // round-trips (Item B). A kept-but-absent entry harmlessly no-ops in
-        // sortSiblings (missing values compare equal / no siblings at that level)
-        // and re-applies when the level returns. A genuine rebind is a schema change
-        // that clears the whole stack via reset() before this runs.
-        this.stack.forEach((e) => {
-            if (e.kind === "rowField") {
-                const field = rowByLevel.get(e.level);
-                if (field) {
-                    e.label = field.displayName;
-                }
-            } else {
-                const col = leafById.get(e.leafColId);
-                if (col) {
-                    e.label = leafLabel(col);
-                }
+        if (!this.active) {
+            return;
+        }
+        if (this.active.kind === "rowField") {
+            const field = activeRowFields[this.active.level];
+            if (field) {
+                this.active.label = field.displayName;
             }
-        });
+        } else {
+            const col = leafColumns.find((c) => c.id === this.active!.leafColId);
+            if (col) {
+                this.active.label = leafLabel(col);
+            }
+        }
     }
 }
 

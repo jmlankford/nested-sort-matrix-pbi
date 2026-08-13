@@ -269,8 +269,11 @@ export class Visual implements IVisual {
         }`;
 
         if (schemaChanged) {
-            // Full refresh: reset volatile session state.
-            this.sort.reset();
+            // Full refresh: reset volatile session state. The ACTIVE SORT is
+            // deliberately NOT reset here — adding or removing a bound field must
+            // never change the active sort (Item B); reconcile() keeps it and only
+            // refreshes its label, so a field add leaves the current sort untouched
+            // (and leaves the visual unsorted when nothing was active).
             this.selection.reset();
             this.bulkOp = null;
             this.pendingAnchor = null;
@@ -390,21 +393,11 @@ export class Visual implements IVisual {
             specificColumnFor: (slot) => this.specificColumnBySlot.get(slot) || DEFAULTS.specificColumn,
             cfFor: (slot) => this.cfBySlot.get(slot) || DEFAULTS.cf,
             leafLabelFor: (col) => this.leafLabel(col),
-            onRowFieldSort: (level, label) => {
-                this.hclk++;
-                this.sort.toggleRowField(level, label);
-                this.rerender(true);
-            },
-            onValueSort: (leafColId, label) => {
-                this.hclk++;
-                this.sort.toggleValue(leafColId, label);
-                this.rerender(true);
-            },
-            onColumnSort: () => {
-                this.hclk++;
-                this.sort.toggleColumnDirection();
-                this.rerender(true);
-            },
+            onRowFieldSort: (level, label) =>
+                this.applySortToggle(() => this.sort.toggleRowField(level, label)),
+            onValueSort: (leafColId, label) =>
+                this.applySortToggle(() => this.sort.toggleValue(leafColId, label)),
+            onColumnSort: () => this.applySortToggle(() => this.sort.toggleColumnDirection()),
             onToggleExpand: (node) => this.toggleNode(node),
             onToggleLevel: (level) => this.toggleLevel(level),
             levelExpandState: (level) => this.levelExpandState(level),
@@ -505,6 +498,21 @@ export class Visual implements IVisual {
             ]
         };
         this.host.persistProperties(objects);
+    }
+
+    /**
+     * Apply a header-sort toggle and re-render, preserving scroll position via
+     * node-key anchoring instead of jumping to the top (Item C). The topmost
+     * visible row is captured before the sort and restored to the same viewport
+     * position after; if the sort moved it far, that is acceptable — the point is
+     * simply that the viewport never resets to the top.
+     */
+    private applySortToggle(toggle: () => void): void {
+        this.hclk++;
+        const anchor = this.renderer.captureAnchor();
+        toggle();
+        this.rerender(false);
+        this.renderer.restoreAnchor(anchor);
     }
 
     /** Re-run the sort + render path using the cached tree (no host update). */
