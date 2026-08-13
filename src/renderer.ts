@@ -1133,7 +1133,21 @@ export class Renderer {
 
                 const field: FieldMeta | undefined = t.hasRowFields ? t.activeRowFields[level] : undefined;
                 cell.append("span").attr("class", "nsm-hlabel").text(field ? field.displayName : "");
-                // No sort handle on tabular non-frozen columns for now.
+
+                // Sort indicator arrow + click-to-sort, identical to the frozen
+                // level-0 / non-tabular header cells. The resize handle stops its
+                // own click/mousedown propagation, so a resize drag never sorts.
+                if (field && colHdr.showSortArrows) {
+                    const dir = input.sort.directionForRowField(level);
+                    cell.append("span").attr("class", "nsm-sortarrow").text(this.arrow(dir));
+                }
+                if (field) {
+                    cell.style("cursor", "pointer").on("click", (event: MouseEvent) => {
+                        event.stopPropagation();
+                        input.onRowFieldSort(level, field.displayName);
+                    });
+                }
+
                 const cellNodeTabular = cell.node() as HTMLElement;
                 if (cellNodeTabular) {
                     this.appendLevelControl(cellNodeTabular, level, input);
