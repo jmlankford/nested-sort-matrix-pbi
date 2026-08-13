@@ -142,6 +142,11 @@ export class Renderer {
     private valueFieldBySlot = new Map<number, FieldMeta>();
     private domains = new Map<string, Domain>();
     private headerHeight = HEADER_ROW_HEIGHT;
+    /** Height of the bottom header row (measure + row-field labels). Grows above
+     *  HEADER_ROW_HEIGHT when header word-wrap is on and a label wraps. */
+    private bottomRowHeight = HEADER_ROW_HEIGHT;
+    /** Reusable canvas 2d context for measuring wrapped header line counts. */
+    private measureCanvas: HTMLCanvasElement | null = null;
     private rowHeight = DEFAULT_ROW_HEIGHT;
 
     // Resizable column-width state (Fix 3). Keyed by leaf-column index.
@@ -398,6 +403,18 @@ export class Renderer {
     // inserted or removed above it.
     // -----------------------------------------------------------------------
 
+    /** Raw scroll offset in px. Used by the SORT path to preserve the exact
+     *  fractional scroll position (a sort keeps row count + height, so the same
+     *  pixel offset maps to the same place) rather than pinning a specific node. */
+    public getScrollTop(): number {
+        return this.scroller.getScrollTop();
+    }
+
+    /** Restore a raw scroll offset captured via getScrollTop(). */
+    public setScrollTop(px: number): void {
+        this.scroller.setScrollTop(px);
+    }
+
     public captureAnchor(): ScrollAnchor {
         const idx = this.scroller.getFirstVisibleIndex();
         const rowHeight = this.scroller.getRowHeight();
@@ -600,9 +617,108 @@ export class Renderer {
         this.valueRegionWidth = lx - this.rowFieldTotalWidth;
         this.contentWidth = lx;
 
-        // Header height accounts for pivot levels + the measure row.
+        // Header height accounts for pivot levels + the bottom (measure + row-field)
+        // row, which may grow when header word-wrap is enabled.
         const pivotLevels = t.columnHeader.pivotRows.length;
-        this.headerHeight = (pivotLevels + 1) * HEADER_ROW_HEIGHT;
+        this.bottomRowHeight = this.computeBottomRowHeight(t);
+        this.headerHeight = pivotLevels * HEADER_ROW_HEIGHT + this.bottomRowHeight;
+    }
+
+    /**
+     * Height of the bottom header row. When header word-wrap is off this is a
+     * single HEADER_ROW_HEIGHT. When on, it grows to fit the tallest wrapped label
+     * among the enabled targets (row-field header names and/or value-column header
+     * names), measured analytically against each cell's own width and font so the
+     * dynamic header height stays correct for the sticky header offset, the sticky
+     * parent-row layer offset, and the virtual scroller's top offset alike.
+     */
+    private computeBottomRowHeight(t: TransformResult): number {
+        const input = this.current;
+        let h = HEADER_ROW_HEIGHT;
+        if (!input) {
+            return h;
+        }
+        const colHdr = input.settings.columnHeaders;
+        const wrapRows = input.settings.rowHeaders.wrapHeaderText;
+        const wrapCols = colHdr.wrapHeaderText;
+        if (!wrapRows && !wrapCols) {
+            return h;
+        }
+        const fontSize = colHdr.fontSize;
+        const lineHeight = Math.ceil(fontSize * 1.35);
+        const vPad = 8; // top+bottom breathing room so wrapped text isn't cramped
+        // Header cells render in the column-header font (see .nsm-hcell CSS var).
+        const font = `${colHdr.bold ? 700 : 400} ${fontSize}px ${colHdr.columnFontFamily}`;
+        const HPAD = 16; // .nsm-hcell left+right padding
+
+        const fit = (label: string, cellWidth: number, controlReserve: number): number => {
+            const avail = Math.max(0, cellWidth - HPAD - controlReserve);
+            const lines = this.wrappedLineCount(label, avail, font);
+            return lines * lineHeight + vPad;
+        };
+
+        if (wrapCols) {
+            for (let i = 0; i < t.leafColumns.length; i++) {
+                const label = input.leafLabelFor(t.leafColumns[i]);
+                const arrowReserve = colHdr.showSortArrows ? 14 : 0;
+                h = Math.max(h, fit(label, this.leafWidths[i] || 0, arrowReserve));
+            }
+        }
+        if (wrapRows && t.hasRowFields) {
+            const count = this.rowFieldColumnCount;
+            for (let level = 0; level < count; level++) {
+                const field = t.activeRowFields[level];
+                if (!field) {
+                    continue;
+                }
+                // Reserve room for the per-level expand control + sort arrow.
+                h = Math.max(h, fit(field.displayName, this.getRowFieldWidth(level), 24));
+            }
+        }
+        // Hard clamp so a pathological label can never produce an absurd header.
+        return Math.min(h, 8 * HEADER_ROW_HEIGHT);
+    }
+
+    /** Greedy word-wrap line count for `text` within `availWidthPx` at `font`,
+     *  accounting for break-word splitting of any single over-long word. */
+    private wrappedLineCount(text: string, availWidthPx: number, font: string): number {
+        if (!text || availWidthPx <= 0) {
+            return 1;
+        }
+        if (!this.measureCanvas) {
+            this.measureCanvas = document.createElement("canvas");
+        }
+        const ctx = this.measureCanvas.getContext("2d");
+        if (!ctx) {
+            return 1;
+        }
+        ctx.font = font;
+        const words = text.split(/\s+/).filter((w) => w.length > 0);
+        if (words.length === 0) {
+            return 1;
+        }
+        let lines = 1;
+        let cur = "";
+        for (const w of words) {
+            const wWidth = ctx.measureText(w).width;
+            if (wWidth > availWidthPx) {
+                // A single word wider than the line breaks across multiple lines.
+                if (cur) {
+                    lines++;
+                }
+                lines += Math.ceil(wWidth / availWidthPx) - 1;
+                cur = "";
+                continue;
+            }
+            const test = cur ? cur + " " + w : w;
+            if (ctx.measureText(test).width > availWidthPx && cur) {
+                lines++;
+                cur = w;
+            } else {
+                cur = test;
+            }
+        }
+        return Math.max(1, lines);
     }
 
     private buildFormatters(input: RenderInput): void {
@@ -827,6 +943,7 @@ export class Renderer {
         // become regular scrollable column headers on the bottom header row.
         const isTabular = input.settings.rowHeaders.layoutMode === "tabular";
         const tabularLeafTop = t.columnHeader.pivotRows.length * HEADER_ROW_HEIGHT;
+        const wrapRows = input.settings.rowHeaders.wrapHeaderText;
         const count = this.rowFieldColumnCount;
         for (let level = 0; level < count; level++) {
             if (isTabular && level > 0) {
@@ -835,12 +952,13 @@ export class Renderer {
                 const cell = headerSel
                     .append("div")
                     .attr("class", "nsm-hcell nsm-hcell-tabular-rowfield")
+                    .classed("nsm-hcell-wrap", wrapRows)
                     .style("position", "absolute")
                     .style("left", this.leftOffsets[level] + "px")
                     .style("top", tabularLeafTop + "px") // same row as value headers
                     .style("width", this.getRowFieldWidth(level) + "px")
-                    .style("height", HEADER_ROW_HEIGHT + "px")
-                    .style("line-height", HEADER_ROW_HEIGHT + "px")
+                    .style("height", this.bottomRowHeight + "px")
+                    .style("line-height", wrapRows ? "1.3" : this.bottomRowHeight + "px")
                     .style("font-weight", colHdr.bold ? "700" : "400")
                     .style("font-size", colHdr.fontSize + "px");
 
@@ -859,10 +977,11 @@ export class Renderer {
             const cell = headerSel
                 .append("div")
                 .attr("class", "nsm-hcell nsm-hcell-rowfield")
+                .classed("nsm-hcell-wrap", wrapRows)
                 .style("left", this.leftOffsets[level] + "px")
                 .style("width", this.getRowFieldWidth(level) + "px")
                 .style("height", this.headerHeight + "px")
-                .style("line-height", this.headerHeight + "px")
+                .style("line-height", wrapRows ? "1.3" : this.headerHeight + "px")
                 .style("background", theme.headerBackground)
                 .style("font-weight", colHdr.bold ? "700" : "400")
                 .style("font-size", colHdr.fontSize + "px");
@@ -933,17 +1052,19 @@ export class Renderer {
 
         // Leaf measure header row (bottom-most header line).
         const leafTop = pivotRows.length * HEADER_ROW_HEIGHT;
+        const wrapCols = colHdr.wrapHeaderText;
         t.leafColumns.forEach((col, colIndex) => {
             const cell = headerSel
                 .append("div")
                 .attr("class", "nsm-hcell nsm-hcell-value")
                 .classed("nsm-hcell-subtotal", col.isColSubtotal)
                 .classed("nsm-hcell-grandtotal", col.isColGrandTotal)
+                .classed("nsm-hcell-wrap", wrapCols)
                 .style("left", this.leafLefts[colIndex] + "px")
                 .style("top", leafTop + "px")
                 .style("width", this.leafWidths[colIndex] + "px")
-                .style("height", HEADER_ROW_HEIGHT + "px")
-                .style("line-height", HEADER_ROW_HEIGHT + "px")
+                .style("height", this.bottomRowHeight + "px")
+                .style("line-height", wrapCols ? "1.3" : this.bottomRowHeight + "px")
                 .style("font-weight", colHdr.bold ? "700" : "400")
                 .style("font-size", colHdr.fontSize + "px");
 

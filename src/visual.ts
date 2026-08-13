@@ -490,17 +490,18 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Apply a header-sort toggle and re-render, preserving scroll position via
-     * node-key anchoring instead of jumping to the top (Item C). The topmost
-     * visible row is captured before the sort and restored to the same viewport
-     * position after; if the sort moved it far, that is acceptable — the point is
-     * simply that the viewport never resets to the top.
+     * Apply a header-sort toggle and re-render, preserving the RAW scroll offset
+     * rather than pinning a node. A sort keeps the row count and row height, so the
+     * total content height is unchanged and the same pixel offset lands the viewport
+     * at the same fractional position (scrolled 25% down stays 25% down), regardless
+     * of which rows now occupy it. (Expand/collapse still uses node-key anchoring via
+     * pendingAnchor + restoreAnchor, because there the row set changes.)
      */
     private applySortToggle(toggle: () => void): void {
-        const anchor = this.renderer.captureAnchor();
+        const scrollTop = this.renderer.getScrollTop();
         toggle();
         this.rerender(false);
-        this.renderer.restoreAnchor(anchor);
+        this.renderer.setScrollTop(scrollTop);
     }
 
     /** Re-run the sort + render path using the cached tree (no host update). */
@@ -1251,7 +1252,8 @@ export class Visual implements IVisual {
                 desc("rowHeaders", "bold"),
                 desc("rowHeaders", "fontSize"),
                 desc("rowHeaders", "indentPerLevel"),
-                desc("rowHeaders", "rowFontFamily")
+                desc("rowHeaders", "rowFontFamily"),
+                desc("rowHeaders", "wrapHeaderText")
             ];
             cards.push({
                 uid: "card-rowHeaders",
@@ -1264,7 +1266,8 @@ export class Visual implements IVisual {
                             toggle("Bold", d[0], s.rowHeaders.bold),
                             num("Font size", d[1], s.rowHeaders.fontSize),
                             num("Indent per level (px)", d[2], s.rowHeaders.indentPerLevel),
-                            dropdown("Font family", d[3], s.rowHeaders.rowFontFamily)
+                            dropdown("Font family", d[3], s.rowHeaders.rowFontFamily),
+                            toggle("Wrap header text", d[4], s.rowHeaders.wrapHeaderText)
                         ]
                     }
                 ],
@@ -1298,7 +1301,8 @@ export class Visual implements IVisual {
                 desc("columnHeaders", "bold"),
                 desc("columnHeaders", "fontSize"),
                 desc("columnHeaders", "showSortArrows"),
-                desc("columnHeaders", "columnFontFamily")
+                desc("columnHeaders", "columnFontFamily"),
+                desc("columnHeaders", "wrapHeaderText")
             ];
             cards.push({
                 uid: "card-columnHeaders",
@@ -1311,7 +1315,8 @@ export class Visual implements IVisual {
                             toggle("Bold", d[0], s.columnHeaders.bold),
                             num("Font size", d[1], s.columnHeaders.fontSize),
                             toggle("Show sort arrows", d[2], s.columnHeaders.showSortArrows),
-                            dropdown("Font family", d[3], s.columnHeaders.columnFontFamily)
+                            dropdown("Font family", d[3], s.columnHeaders.columnFontFamily),
+                            toggle("Wrap header text", d[4], s.columnHeaders.wrapHeaderText)
                         ]
                     }
                 ],

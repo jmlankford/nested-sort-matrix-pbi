@@ -530,26 +530,6 @@ export function transform(
         grandTotal.identity = (rootSubtotal || rowRoot).identity;
     }
 
-    // TEMP (Part 3): report the count of engine-delivered subtotal nodes on every
-    // transform so the query-subtotal decoupling (subtotal ROWS toggle vs. query
-    // subtotal request) can be verified in browser dev-tools on PBIRS. Remove once
-    // the decoupling is confirmed. If this ever prints 0, the engine stopped
-    // shipping subtotal nodes and parent group rows will lose their values.
-    let subtotalNodeCount = 0;
-    const countSubtotals = (mnode: DataViewMatrixNode): void => {
-        const kids = mnode.children || [];
-        for (let i = 0; i < kids.length; i++) {
-            if (kids[i].isSubtotal) {
-                subtotalNodeCount++;
-            }
-            countSubtotals(kids[i]);
-        }
-    };
-    if (rowRoot) {
-        countSubtotals(rowRoot);
-    }
-    console.warn(`[NSM] engine subtotal nodes: ${subtotalNodeCount}`);
-
     if (!hasRowFields || !rowRoot) {
         // No row grouping: the whole grid is a single (grand total) row.
         const synthetic = newNode("__all__", settings.subtotals.labelText || "Total", null, 0, undefined);

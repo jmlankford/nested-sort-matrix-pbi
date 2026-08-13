@@ -79,6 +79,8 @@ export interface RowHeaderSettings {
     layoutMode: LayoutMode;
     /** Repeat ancestor labels on the first visible row when scrolled. */
     repeatRowHeaders: boolean;
+    /** Wrap long row-field header names instead of clipping with ellipsis. */
+    wrapHeaderText: boolean;
 }
 
 export interface ColumnHeaderSettings {
@@ -87,6 +89,8 @@ export interface ColumnHeaderSettings {
     showSortArrows: boolean;
     /** Column-header font family. */
     columnFontFamily: string;
+    /** Wrap long value-column header names instead of clipping with ellipsis. */
+    wrapHeaderText: boolean;
 }
 
 export interface ExpandCollapseSettings {
@@ -225,13 +229,15 @@ export const DEFAULTS = {
         // Defaults match the first font-family dropdown option (capabilities.json).
         rowFontFamily: "Segoe UI",
         layoutMode: "compact" as LayoutMode,
-        repeatRowHeaders: false
+        repeatRowHeaders: false,
+        wrapHeaderText: false
     },
     columnHeaders: {
         bold: true,
         fontSize: 13,
         showSortArrows: true,
-        columnFontFamily: "Segoe UI"
+        columnFontFamily: "Segoe UI",
+        wrapHeaderText: false
     },
     expandCollapse: {
         show: true,
@@ -452,6 +458,12 @@ export function parseVisualSettings(metadataObjects: DataViewObjects | undefined
                 "layoutOptions",
                 "repeatRowHeaders",
                 DEFAULTS.rowHeaders.repeatRowHeaders
+            ),
+            wrapHeaderText: getBool(
+                metadataObjects,
+                "rowHeaders",
+                "wrapHeaderText",
+                DEFAULTS.rowHeaders.wrapHeaderText
             )
         },
         columnHeaders: {
@@ -473,6 +485,12 @@ export function parseVisualSettings(metadataObjects: DataViewObjects | undefined
                 "columnHeaders",
                 "columnFontFamily",
                 DEFAULTS.columnHeaders.columnFontFamily
+            ),
+            wrapHeaderText: getBool(
+                metadataObjects,
+                "columnHeaders",
+                "wrapHeaderText",
+                DEFAULTS.columnHeaders.wrapHeaderText
             )
         },
         expandCollapse: {

@@ -138,6 +138,7 @@
       "properties": {
         "bold": { "displayName": "Bold", "type": { "bool": true } },
         "fontSize": { "displayName": "Font size", "type": { "numeric": true } },
+        "wrapHeaderText": { "displayName": "Wrap header text", "type": { "bool": true } },
         "indentPerLevel": { "displayName": "Indent per level (px)", "type": { "numeric": true } },
         "rowFontFamily": {
           "displayName": "Font family",
@@ -187,6 +188,7 @@
         "bold": { "displayName": "Bold", "type": { "bool": true } },
         "fontSize": { "displayName": "Font size", "type": { "numeric": true } },
         "showSortArrows": { "displayName": "Show sort arrows", "type": { "bool": true } },
+        "wrapHeaderText": { "displayName": "Wrap header text", "type": { "bool": true } },
         "columnFontFamily": {
           "displayName": "Font family",
           "type": {

@@ -140,6 +140,22 @@
     }
 }
 
+// Header word-wrap (Row Headers / Column Headers "Wrap header text"). The cell
+// height is computed to fit, so the label may wrap onto multiple lines and long
+// unbroken tokens break rather than overflow.
+.nsm-hcell-wrap {
+    white-space: normal;
+    overflow: hidden;
+
+    .nsm-hlabel {
+        white-space: normal;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        text-overflow: clip;
+    }
+}
+
 .nsm-hcell-value {
     justify-content: flex-end;
     text-align: right;
