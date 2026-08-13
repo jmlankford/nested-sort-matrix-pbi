@@ -39,23 +39,23 @@
   "subtotals": {
     "matrix": {
       "rowSubtotals": {
-        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "rowSubtotals" },
+        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "rowSubtotals" },
         "defaultValue": true
       },
       "rowSubtotalsPerLevel": {
-        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "perRowLevel" },
+        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "rowSubtotalsPerLevel" },
         "defaultValue": false
       },
       "columnSubtotals": {
-        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "columnSubtotals" },
+        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "columnSubtotals" },
         "defaultValue": true
       },
       "columnSubtotalsPerLevel": {
-        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "perColumnLevel" },
+        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "columnSubtotalsPerLevel" },
         "defaultValue": false
       },
       "levelSubtotalEnabled": {
-        "propertyIdentifier": { "objectName": "subtotals", "propertyName": "levelEnabled" },
+        "propertyIdentifier": { "objectName": "querySubtotals", "propertyName": "levelSubtotalEnabled" },
         "defaultValue": true
       }
     }
@@ -77,8 +77,10 @@
       "displayName": "Query Subtotals (internal)",
       "properties": {
         "rowSubtotals": { "displayName": "Row subtotals", "type": { "bool": true } },
+        "rowSubtotalsPerLevel": { "displayName": "Row subtotals per level", "type": { "bool": true } },
         "columnSubtotals": { "displayName": "Column subtotals", "type": { "bool": true } },
-        "perLevel": { "displayName": "Per level", "type": { "bool": true } }
+        "columnSubtotalsPerLevel": { "displayName": "Column subtotals per level", "type": { "bool": true } },
+        "levelSubtotalEnabled": { "displayName": "Level subtotal enabled", "type": { "bool": true } }
       }
     },
     "general": {

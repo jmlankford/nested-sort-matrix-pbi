@@ -500,6 +500,17 @@
         text-align: center;
         padding: 24px;
     }
+
+    .nsm-config-note {
+        color: #605e5c;
+        background: #f3f2f1;
+        border-left: 3px solid #118dff;
+        font-size: 12px;
+        line-height: 1.4;
+        padding: 8px 10px;
+        margin-bottom: 10px;
+        border-radius: 3px;
+    }
 }
 
 .nsm-config-item {
@@ -512,6 +523,11 @@
     border: 1px solid #edebe9;
     border-radius: 4px;
     cursor: grab;
+
+    // Rows / Column Fields cannot reorder — no grab affordance.
+    &.no-drag {
+        cursor: default;
+    }
 
     &.dragging {
         opacity: 0.5;

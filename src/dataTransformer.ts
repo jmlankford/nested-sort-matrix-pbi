@@ -7,13 +7,13 @@
  *     hierarchies and value sources).
  *   - Walk of dataView.matrix.rows.root into the RowTreeNode hierarchy. The
  *     engine supplies every level's values (including subtotal / grand-total
- *     nodes), so there is NO client-side aggregation.
+ *     nodes) at that node's true scope, so the visual performs no aggregation
+ *     of its own.
  *   - Crosstab / pivot column layout from dataView.matrix.columns.root.
  *
  * Because the engine evaluates each measure at the true scope of every
  * hierarchy node, level-aware and non-additive measures (DISTINCTCOUNT, ratios,
- * AVERAGE, ISINSCOPE dispatchers, ...) now roll up correctly — the summing that
- * the old Table-DataView path performed has been removed entirely.
+ * AVERAGE, ISINSCOPE dispatchers, ...) roll up correctly.
  *
  * Value cells may be text (text measures). They are stored raw (number | string
  * | null); numeric-only checks live in the consumers (renderer / CF / sort).
@@ -100,15 +100,26 @@ export interface RowTreeNode {
     label: string;
     /** Raw underlying group value, retained for sorting. */
     rawValue: PrimitiveValue | null;
-    /** 0-based row hierarchy depth. */
+    /**
+     * 0-based DISPLAY depth. When no row levels are hidden this equals the matrix
+     * hierarchy level; when a level is hidden its nodes are flattened out and the
+     * survivors' display depth is compacted, so this can be shallower than the
+     * matrix level. All rendering / indentation / sort keys off this.
+     */
     level: number;
+    /** True matrix hierarchy level (used for host expand/collapse targeting). */
+    matrixLevel?: number;
+    /**
+     * Full matrix ancestor chain (root→node), INCLUDING nodes at hidden levels,
+     * so a selection id built via withMatrixNode keeps the complete level path
+     * even when intermediate levels are flattened out of the display tree.
+     */
+    matrixChain?: DataViewMatrixNode[];
     children: RowTreeNode[];
     isLeaf: boolean;
     isGrandTotal: boolean;
     /** Engine-computed measure values keyed by LeafColumn.id (may be text). */
     values: { [leafColId: string]: CellValue };
-    /** Underlying table row indices — no longer populated under matrix (see selection Phase 2). */
-    rowIndices: number[];
     /** Lazily-created selection id for this node (built on demand). */
     selectionId?: ISelectionId;
     /** Opaque identity of the backing matrix node (used for selection & expand/collapse). */
@@ -149,15 +160,15 @@ export interface TransformResult {
     rowCount: number;
     hasRowFields: boolean;
     isPivot: boolean;
-    /** TEMP: matrix-walk diagnostics rendered in the status bar. */
-    debug: string;
+    /**
+     * Every expandable node in the FULL matrix tree — including nodes at HIDDEN
+     * levels that are flattened out of rootNodes — each carrying its matrixChain.
+     * Expand/Collapse-All walks this by matrix level so it can still reach and
+     * expand collapsed hidden levels (whose children must materialise before the
+     * flatten can re-parent them). Empty when there are no row fields.
+     */
+    expandNodes: RowTreeNode[];
 }
-
-/**
- * Factory injected by the visual so the transformer can build selection ids.
- * Retained for API stability; matrix-node-based selection lands in Phase 2.
- */
-export type SelectionIdFactory = (rowIndices: number[]) => ISelectionId | undefined;
 
 // ---------------------------------------------------------------------------
 // Field discovery.
@@ -459,36 +470,8 @@ function newNode(
         isLeaf: false,
         isGrandTotal: false,
         values: {},
-        rowIndices: [],
         parent
     };
-}
-
-/**
- * Collect underlying data row indices beneath a node. Retained for API
- * compatibility with the selection manager; matrix nodes no longer expose flat
- * row indices, so this returns an empty set until selection is re-keyed onto
- * matrix identities (Phase 2).
- */
-export function collectRowIndices(node: RowTreeNode): number[] {
-    if (node.isLeaf) {
-        return node.rowIndices.slice();
-    }
-    const out: number[] = [];
-    const stack: RowTreeNode[] = [node];
-    while (stack.length) {
-        const n = stack.pop() as RowTreeNode;
-        if (n.isLeaf) {
-            for (let i = 0; i < n.rowIndices.length; i++) {
-                out.push(n.rowIndices[i]);
-            }
-        } else {
-            for (let i = 0; i < n.children.length; i++) {
-                stack.push(n.children[i]);
-            }
-        }
-    }
-    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +484,13 @@ export function transform(
     activeValueFields: FieldMeta[],
     activeColFields: FieldMeta[],
     settings: VisualSettings,
-    _selectionFactory: SelectionIdFactory
+    /**
+     * Matrix row-hierarchy levels the user has hidden via the config panel. Nodes
+     * at these levels are flattened out of the display tree (their children are
+     * re-parented up and their subtotal rows suppressed) while remaining in the
+     * matrix chain so engine values and selection ids stay correct.
+     */
+    hiddenRowLevels: Set<number> = new Set()
 ): TransformResult {
     const matrix: DataViewMatrix | undefined = dataView && dataView.matrix;
     const isPivot = activeColFields.length > 0;
@@ -541,33 +530,25 @@ export function transform(
         grandTotal.identity = (rootSubtotal || rowRoot).identity;
     }
 
-    // TEMP diagnostics: walk the raw matrix rows tree (including subtotal nodes)
-    // and tally total nodes, subtotal nodes, and a per-level histogram.
-    let diagTotal = 0;
-    let diagSub = 0;
-    const diagPerLevel: number[] = [];
-    const diagWalk = (mnode: DataViewMatrixNode): void => {
+    // TEMP (Part 3): report the count of engine-delivered subtotal nodes on every
+    // transform so the query-subtotal decoupling (subtotal ROWS toggle vs. query
+    // subtotal request) can be verified in browser dev-tools on PBIRS. Remove once
+    // the decoupling is confirmed. If this ever prints 0, the engine stopped
+    // shipping subtotal nodes and parent group rows will lose their values.
+    let subtotalNodeCount = 0;
+    const countSubtotals = (mnode: DataViewMatrixNode): void => {
         const kids = mnode.children || [];
         for (let i = 0; i < kids.length; i++) {
-            const child = kids[i];
-            diagTotal++;
-            if (child.isSubtotal) {
-                diagSub++;
+            if (kids[i].isSubtotal) {
+                subtotalNodeCount++;
             }
-            const lvl = child.level != null ? child.level : 0;
-            diagPerLevel[lvl] = (diagPerLevel[lvl] || 0) + 1;
-            diagWalk(child);
+            countSubtotals(kids[i]);
         }
     };
     if (rowRoot) {
-        diagWalk(rowRoot);
+        countSubtotals(rowRoot);
     }
-    const diagHisto = diagPerLevel
-        .map((c, i) => `L${i}:${c || 0}`)
-        .join(" ");
-    let debug = `DBG nodes:${diagTotal} sub:${diagSub} rf:${activeRowFields.length}${
-        diagHisto ? " " + diagHisto : ""
-    }`;
+    console.warn(`[NSM] engine subtotal nodes: ${subtotalNodeCount}`);
 
     if (!hasRowFields || !rowRoot) {
         // No row grouping: the whole grid is a single (grand total) row.
@@ -587,7 +568,7 @@ export function transform(
             rowCount: 0,
             hasRowFields: false,
             isPivot,
-            debug
+            expandNodes: []
         };
     }
 
@@ -599,27 +580,78 @@ export function transform(
     });
 
     let leafCount = 0;
+    // Flat list of every expandable matrix node (visible + hidden level), for
+    // Expand/Collapse-All progression by matrix level.
+    const expandNodes: RowTreeNode[] = [];
 
-    const buildNode = (mnode: DataViewMatrixNode, parent: RowTreeNode | undefined): RowTreeNode => {
-        const level = mnode.level != null ? mnode.level : (parent ? parent.level + 1 : 0);
+    /**
+     * Build the display node(s) for one matrix node. Returns an ARRAY so that a
+     * node at a HIDDEN level contributes its (recursively flattened) children in
+     * its place rather than a node of its own — the re-parent-to-grandparent step.
+     *
+     * @param mnode         the matrix node
+     * @param parent        the nearest VISIBLE display ancestor (re-parent target)
+     * @param displayLevel  compacted 0-based depth among VISIBLE levels
+     * @param chain         full matrix ancestor chain root→mnode (hidden included)
+     * @param keyPrefix     serialized ancestor path (hidden levels included) so
+     *                      re-parented siblings keep unique keys
+     */
+    const buildNodes = (
+        mnode: DataViewMatrixNode,
+        parent: RowTreeNode | undefined,
+        displayLevel: number,
+        chain: DataViewMatrixNode[],
+        keyPrefix: string
+    ): RowTreeNode[] => {
+        const matrixLevel = mnode.level != null ? mnode.level : chain.length;
         const raw = matrixNodeRaw(mnode);
-        const label = formatLabel(raw, rowLevelFormatters[level]);
-        // Stable key = serialized level-value path (unique across siblings).
-        const key = (parent ? parent.key : "") + PATH_SEP + label + ID_SEP + level;
-        const node = newNode(key, label, raw, level, parent);
-        node.identity = mnode.identity;
-        node.matrixNode = mnode;
-        node.isCollapsed = mnode.isCollapsed;
+        const label = formatLabel(raw, rowLevelFormatters[matrixLevel]);
+        const myChain = chain.concat(mnode);
+        // Key path always includes hidden levels, so two invoices re-parented from
+        // different (hidden) customers under the same group never collide.
+        const myKey = keyPrefix + PATH_SEP + label + ID_SEP + matrixLevel;
 
         const children = mnode.children || [];
         const realChildren = children.filter((c) => !c.isSubtotal);
         const subtotalChild = children.filter((c) => c.isSubtotal)[0];
 
+        // Record every expandable node (collapsible group) for Expand/Collapse-All,
+        // whether or not this level is displayed — a hidden collapsed level must
+        // still be reachable so its children can materialise.
+        if (mnode.isCollapsed !== undefined) {
+            const stub = newNode(myKey, label, raw, displayLevel, parent);
+            stub.matrixNode = mnode;
+            stub.matrixChain = myChain;
+            stub.matrixLevel = matrixLevel;
+            stub.isCollapsed = mnode.isCollapsed;
+            expandNodes.push(stub);
+        }
+
+        if (hiddenRowLevels.has(matrixLevel)) {
+            // Hidden level: emit no node of our own; splice this node's real
+            // children up to the current display parent at the SAME display level.
+            // The subtotal child is dropped (its row is suppressed). A collapsed
+            // hidden node has no children yet, so it contributes nothing until the
+            // user expands it (via Expand All / drill), which is coherent with the
+            // host: the children simply are not in the DataView while collapsed.
+            const out: RowTreeNode[] = [];
+            realChildren.forEach((child) => {
+                out.push(...buildNodes(child, parent, displayLevel, myChain, myKey));
+            });
+            return out;
+        }
+
+        const node = newNode(myKey, label, raw, displayLevel, parent);
+        node.identity = mnode.identity;
+        node.matrixNode = mnode;
+        node.matrixChain = myChain;
+        node.matrixLevel = matrixLevel;
+        node.isCollapsed = mnode.isCollapsed;
+
         // Leaf-ness is driven by the host's isCollapsed flag, NOT the projected
         // level count. With expand/collapse active a collapsed group arrives with
-        // NO children, and (without keepAllMetadataColumns) the deepest *visible*
-        // level is the last projected level — so a level-based test would wrongly
-        // classify every collapsed group as a leaf and draw no +/- control.
+        // NO children, so a level-based test would wrongly classify every collapsed
+        // group as a leaf and draw no +/- control.
         //   isCollapsed === true  -> collapsed group (expandable)
         //   isCollapsed === false -> expanded group
         //   isCollapsed undefined -> a true leaf (or, defensively, a fully-
@@ -633,77 +665,16 @@ export function transform(
             // matching subtotal node (true-scope value, NOT a sum of children).
             node.values = subtotalChild ? readNodeValues(subtotalChild) : readNodeValues(mnode);
             realChildren.forEach((child) => {
-                node.children.push(buildNode(child, node));
+                node.children.push(...buildNodes(child, node, displayLevel + 1, myChain, myKey));
             });
         }
-        return node;
+        return [node];
     };
 
     const roots: RowTreeNode[] = [];
     (rowRoot.children || [])
         .filter((c) => !c.isSubtotal)
-        .forEach((c) => roots.push(buildNode(c, undefined)));
-
-    // TEMP diagnostic (fan-out): compare the HOST-delivered children of TWO sibling
-    // parents at the deepest expanded level, straight from mnode.children before any
-    // of our walk logic. This is the definitive cross-join test the earlier one-parent
-    // "kids:N" readout could not give: one parent showing N children is ambiguous
-    // (it may legitimately own N), but TWO different parents both showing the SAME N
-    // children with the SAME first labels can only mean the host cross-joined every
-    // invoice under every customer. If the two child lists differ, the host tree is
-    // correct and any fan-out is on our side (render/scroller).
-    //   sib:L<lvl> A=<label>(n)[c0,c1] B=<label>(n)[c0,c1] same:<0|1>
-    // same:1  => host cross-join (bug is the request/capabilities)
-    // same:0  => host tree is correct (bug, if any, is ours)
-    const byLevel: { [lvl: number]: DataViewMatrixNode[] } = {};
-    const rawWalk = (mnode: DataViewMatrixNode): void => {
-        const realKids = (mnode.children || []).filter((c) => !c.isSubtotal);
-        if (realKids.length > 0 && mnode.level != null) {
-            (byLevel[mnode.level] || (byLevel[mnode.level] = [])).push(mnode);
-        }
-        (mnode.children || []).forEach(rawWalk);
-    };
-    rawWalk(rowRoot);
-    // Deepest level that has at least two expanded parents to compare.
-    let cmpLevel = -1;
-    for (const k in byLevel) {
-        const lvl = Number(k);
-        if (byLevel[lvl].length >= 2 && lvl > cmpLevel) {
-            cmpLevel = lvl;
-        }
-    }
-    if (cmpLevel >= 0) {
-        const kidLabels = (m: DataViewMatrixNode): string[] =>
-            (m.children || [])
-                .filter((c) => !c.isSubtotal)
-                .map((c) => formatLabel(matrixNodeRaw(c), rowLevelFormatters[c.level != null ? c.level : cmpLevel + 1]));
-        const [a, b] = byLevel[cmpLevel];
-        const al = kidLabels(a);
-        const bl = kidLabels(b);
-        const aLabel = formatLabel(matrixNodeRaw(a), rowLevelFormatters[cmpLevel]);
-        const bLabel = formatLabel(matrixNodeRaw(b), rowLevelFormatters[cmpLevel]);
-        // "same" = identical child multisets (fan-out signature). Compare full sorted
-        // label lists so ordering differences don't mask a genuine cross-join.
-        const same =
-            al.length === bl.length && al.slice().sort().join("") === bl.slice().sort().join("")
-                ? 1
-                : 0;
-        debug +=
-            ` | sib:L${cmpLevel}` +
-            ` A=${aLabel}(${al.length})[${al.slice(0, 2).join(",")}]` +
-            ` B=${bLabel}(${bl.length})[${bl.slice(0, 2).join(",")}]` +
-            ` same:${same}`;
-    } else {
-        // Only one (or zero) expanded parent available — surface it so the readout is
-        // never blank; expand a SECOND customer to get the comparison.
-        const one = byLevel[Object.keys(byLevel).map(Number).reduce((m, v) => Math.max(m, v), -1)];
-        if (one && one[0]) {
-            const m = one[0];
-            const lvl = m.level != null ? m.level : 0;
-            const kids = (m.children || []).filter((c) => !c.isSubtotal);
-            debug += ` | sib:L${lvl} A=${formatLabel(matrixNodeRaw(m), rowLevelFormatters[lvl])}(${kids.length}) B=- same:?`;
-        }
-    }
+        .forEach((c) => roots.push(...buildNodes(c, undefined, 0, [], "")));
 
     return {
         rootNodes: roots,
@@ -716,6 +687,6 @@ export function transform(
         rowCount: leafCount,
         hasRowFields: true,
         isPivot,
-        debug
+        expandNodes
     };
 }

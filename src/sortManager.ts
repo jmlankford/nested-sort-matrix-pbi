@@ -49,11 +49,6 @@ export class SortManager {
     private active: ActiveSort | null = null;
     /** Direction for default pivot column ordering (label sort of col fields). */
     private columnDirection: SortDirection = "asc";
-    /** TEMP (Item A): per-depth {sorted,changed} counts from the last sort pass. */
-    private lastSortStats: { sorted: number; changed: number }[] = [];
-    /** TEMP (Item A): the sort key + first 3 resolved sibling values at depth 1. */
-    private srtkToken = "";
-    private srtkDone = false;
 
     public reset(): void {
         this.active = null;
@@ -62,20 +57,6 @@ export class SortManager {
 
     public isEmpty(): boolean {
         return this.active === null;
-    }
-
-    /** TEMP: compact sort-state token for the status-bar DBG readout. */
-    public getDebugToken(): string {
-        if (!this.active) {
-            return "srt:-";
-        }
-        const a = this.active;
-        const key = a.kind === "value" ? `v${a.leafColId}` : `r${a.level}`;
-        let s = `${key}:${a.direction}`;
-        if (s.length > 40) {
-            s = s.slice(0, 40) + "…";
-        }
-        return "srt:" + s;
     }
 
     // -----------------------------------------------------------------------
@@ -137,9 +118,6 @@ export class SortManager {
     // -----------------------------------------------------------------------
 
     public applyNestedSort(result: TransformResult): void {
-        this.lastSortStats = [];
-        this.srtkToken = "";
-        this.srtkDone = false;
         if (!result.hasRowFields) {
             this.applyColumnOrder(result);
             return;
@@ -148,29 +126,6 @@ export class SortManager {
         this.sortSiblings(result.rootNodes, 0);
         result.rootNodes.forEach((n) => this.sortRecursive(n));
         this.applyColumnOrder(result);
-    }
-
-    /** TEMP (Item A): per-depth "sorted/changed" sibling-array counts, e.g.
-     *  srtd:L0:12/3,L1:48/40 — shows whether recursion reaches deeper levels and
-     *  whether the sort actually reordered anything at each depth. */
-    public getSortedToken(): string {
-        if (this.lastSortStats.length === 0) {
-            return "srtd:-";
-        }
-        const parts: string[] = [];
-        for (let i = 0; i < this.lastSortStats.length; i++) {
-            const s = this.lastSortStats[i] || { sorted: 0, changed: 0 };
-            parts.push(`L${i}:${s.sorted}/${s.changed}`);
-        }
-        return "srtd:" + parts.join(",");
-    }
-
-    /** TEMP (Item A): the depth-1 sort key + first 3 resolved sibling values,
-     *  e.g. srtk:::#::v0 vals:[1234,300,null]. Reveals whether group/collapsed nodes
-     *  resolve the same colId the sort compares against (null ⇒ key mismatch) and
-     *  whether the post-sort order is actually descending/ascending. */
-    public getKeyToken(): string {
-        return this.srtkToken || "srtk:-";
     }
 
     private sortRecursive(node: RowTreeNode): void {
@@ -182,13 +137,11 @@ export class SortManager {
         node.children.forEach((c) => this.sortRecursive(c));
     }
 
-    private sortSiblings(siblings: RowTreeNode[], level: number): void {
+    private sortSiblings(siblings: RowTreeNode[], _level: number): void {
         const a = this.active;
         if (!a) {
             return; // no active sort -> preserve engine order
         }
-        // TEMP (Item A): record whether this sibling array actually reordered.
-        const before = siblings.length > 1 ? siblings.map((s) => s.key).join("\u0001") : "";
         siblings.sort((x, y) => {
             let c =
                 a.kind === "value"
@@ -199,27 +152,6 @@ export class SortManager {
             }
             return c;
         });
-        const after = siblings.length > 1 ? siblings.map((s) => s.key).join("\u0001") : "";
-        const st = this.lastSortStats[level] || { sorted: 0, changed: 0 };
-        st.sorted++;
-        if (before !== after) {
-            st.changed++;
-        }
-        this.lastSortStats[level] = st;
-
-        // TEMP (Item A): capture the first multi-sibling depth-1 array's value-sort
-        // key and its first 3 resolved (post-sort) values.
-        if (level === 1 && !this.srtkDone && siblings.length > 1 && a.kind === "value") {
-            const fmt = (v: number | string | null | undefined): string =>
-                v === null || v === undefined
-                    ? "null"
-                    : typeof v === "string"
-                    ? `"${v}"`
-                    : String(v);
-            const vals = siblings.slice(0, 3).map((s) => fmt(s.values[a.leafColId]));
-            this.srtkToken = `srtk:${a.leafColId} vals:[${vals.join(",")}]`;
-            this.srtkDone = true;
-        }
     }
 
     /** Re-order leaf columns when the user flips pivot column direction. */

@@ -20,6 +20,7 @@ import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructor
 import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
 import IVisualHost = powerbi.extensibility.visual.IVisualHost;
 import DataView = powerbi.DataView;
+import DataViewMatrixNode = powerbi.DataViewMatrixNode;
 import ISelectionManager = powerbi.extensibility.ISelectionManager;
 import ISelectionId = powerbi.visuals.ISelectionId;
 import Selector = powerbi.data.Selector;
@@ -96,10 +97,6 @@ export class Visual implements IVisual {
     private prevRowNames: string[] | null = null;
     private prevValSig = "";
     private prevColSig = "";
-    /** TEMP: schema-change diagnostic token (Item 1) appended to the status bar. */
-    private diagSchema = "";
-    /** TEMP: count of header sort-handler invocations that actually fired (hclk). */
-    private hclk = 0;
 
     // Native expand/collapse (Phase 2). Expansion state is owned by the host and
     // reflected in each matrix node's isCollapsed flag — the visual keeps no local
@@ -113,9 +110,6 @@ export class Visual implements IVisual {
     // Latest update artefacts (kept for callbacks & enumeration).
     private dataView: DataView | undefined = undefined;
     private lastTransform: TransformResult | null = null;
-    // TEMP: last computed matrix-walk diagnostics string, persisted across
-    // rerender paths (sort/expand/config/CF apply) that reuse a cached transform.
-    private lastDebug = "";
     private activeRowFields: FieldMeta[] = [];
     private activeValueFields: FieldMeta[] = [];
     private valueFormatBySlot = new Map<number, ValueFormatSettings>();
@@ -264,9 +258,6 @@ export class Visual implements IVisual {
         this.prevValSig = valSig;
         this.prevColSig = colSig;
         this.schemaSignature = `r:${rowNames.join(",")}|v:${valSig}|c:${colSig}`;
-        this.diagSchema = `sc:${schemaChanged ? 1 : 0} sig:${
-            this.schemaSignature.length > 44 ? this.schemaSignature.slice(0, 44) + "…" : this.schemaSignature
-        }`;
 
         if (schemaChanged) {
             // Full refresh: reset volatile session state. The ACTIVE SORT is
@@ -329,10 +320,9 @@ export class Visual implements IVisual {
             activeValueFields,
             activeColFields,
             this.settings,
-            () => undefined // legacy factory param; matrix selection ids attached below
+            this.hiddenRowLevels()
         );
         this.lastTransform = result;
-        this.lastDebug = result.debug;
 
         // Attach matrix-node selection ids to leaf rows (Phase 2 Part E).
         this.attachSelectionIds(result);
@@ -369,8 +359,7 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: result.rowCount,
-            allExpanded: this.computeAllExpanded(result),
-            debug: this.statusDebug()
+            allExpanded: this.computeAllExpanded(result)
         });
 
         // Continue a bulk Expand All / Collapse All in progress (Part B global).
@@ -508,7 +497,6 @@ export class Visual implements IVisual {
      * simply that the viewport never resets to the top.
      */
     private applySortToggle(toggle: () => void): void {
-        this.hclk++;
         const anchor = this.renderer.captureAnchor();
         toggle();
         this.rerender(false);
@@ -520,8 +508,7 @@ export class Visual implements IVisual {
         // Sorting only needs the cached tree, NOT the live dataView — the old
         // `!this.dataView` guard could silently no-op a sort click after a
         // viewport-only update. A render exception must never freeze interaction,
-        // so it is caught and the status bar (incl. the hclk: diagnostic) still
-        // refreshes.
+        // so it is caught and the status bar still refreshes.
         if (!this.lastTransform) {
             return;
         }
@@ -538,8 +525,7 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: this.lastTransform.rowCount,
-            allExpanded: this.computeAllExpanded(this.lastTransform),
-            debug: this.statusDebug()
+            allExpanded: this.computeAllExpanded(this.lastTransform)
         });
     }
 
@@ -655,7 +641,7 @@ export class Visual implements IVisual {
             this.pendingAnchor = null;
             return;
         }
-        const node = this.findLevelNode(target, this.bulkOp === "expand");
+        const node = this.findExpandNodeAtMatrixLevel(target, this.bulkOp === "expand");
         if (!node) {
             this.bulkOp = null;
             this.pendingAnchor = null;
@@ -686,20 +672,28 @@ export class Visual implements IVisual {
             return undefined;
         }
         const levels = matrix.rows.levels;
-        const chain: RowTreeNode[] = [];
-        let n: RowTreeNode | undefined = node;
-        while (n) {
-            chain.unshift(n);
-            n = n.parent;
+        // Prefer the full matrix ancestor chain captured at transform time — it
+        // includes nodes at HIDDEN levels that the display parent chain skips, so
+        // the selection id keeps the complete level path. Fall back to walking the
+        // display parents when a node has no captured chain (e.g. synthetic nodes).
+        let matrixNodes: DataViewMatrixNode[];
+        if (node.matrixChain && node.matrixChain.length > 0) {
+            matrixNodes = node.matrixChain;
+        } else {
+            matrixNodes = [];
+            let n: RowTreeNode | undefined = node;
+            while (n) {
+                if (!n.matrixNode) {
+                    return undefined;
+                }
+                matrixNodes.unshift(n.matrixNode);
+                n = n.parent;
+            }
         }
         try {
             let builder = this.host.createSelectionIdBuilder();
-            for (let i = 0; i < chain.length; i++) {
-                const mn = chain[i].matrixNode;
-                if (!mn) {
-                    return undefined;
-                }
-                builder = builder.withMatrixNode(mn, levels);
+            for (let i = 0; i < matrixNodes.length; i++) {
+                builder = builder.withMatrixNode(matrixNodes[i], levels);
             }
             return builder.createSelectionId();
         } catch {
@@ -720,24 +714,13 @@ export class Visual implements IVisual {
         result.rootNodes.forEach(walk);
     }
 
-    /** True if no expandable node anywhere is still collapsed. */
+    /** True if no expandable node anywhere is still collapsed. Uses the full
+     *  expandable-node list (incl. hidden levels), not just the display tree. */
     private computeAllExpanded(result: TransformResult | null): boolean {
-        if (!result) {
+        if (!result || result.expandNodes.length === 0) {
             return false;
         }
-        let sawExpandable = false;
-        let anyCollapsed = false;
-        const walk = (node: RowTreeNode): void => {
-            if (node.isCollapsed !== undefined) {
-                sawExpandable = true;
-                if (node.isCollapsed) {
-                    anyCollapsed = true;
-                }
-            }
-            node.children.forEach(walk);
-        };
-        result.rootNodes.forEach(walk);
-        return sawExpandable && !anyCollapsed;
+        return !result.expandNodes.some((n) => n.isCollapsed === true);
     }
 
     /** Aggregate expand/collapse state of a hierarchy level for its header control. */
@@ -797,36 +780,58 @@ export class Visual implements IVisual {
         return found || fallback;
     }
 
-    /** Shallowest level that still has a collapsed expandable node (or -1). */
+    /**
+     * Shallowest MATRIX level that still has a collapsed expandable node (or -1).
+     * Bulk expand/collapse walks the full expandable-node list — including hidden
+     * levels — by matrix level, so Expand All can reach and expand a collapsed
+     * hidden level whose children have not yet materialised.
+     */
     private shallowestCollapsedLevel(): number {
-        if (!this.lastTransform) {
-            return -1;
-        }
+        const nodes = this.lastTransform ? this.lastTransform.expandNodes : [];
         let best = -1;
-        const walk = (node: RowTreeNode): void => {
-            if (node.isCollapsed === true && (best < 0 || node.level < best)) {
-                best = node.level;
+        for (const n of nodes) {
+            const ml = n.matrixLevel != null ? n.matrixLevel : n.level;
+            if (n.isCollapsed === true && (best < 0 || ml < best)) {
+                best = ml;
             }
-            node.children.forEach(walk);
-        };
-        this.lastTransform.rootNodes.forEach(walk);
+        }
         return best;
     }
 
-    /** Deepest level that still has an expanded expandable node (or -1). */
+    /** Deepest MATRIX level that still has an expanded expandable node (or -1). */
     private deepestExpandedLevel(): number {
-        if (!this.lastTransform) {
-            return -1;
-        }
+        const nodes = this.lastTransform ? this.lastTransform.expandNodes : [];
         let best = -1;
-        const walk = (node: RowTreeNode): void => {
-            if (node.isCollapsed === false && node.level > best) {
-                best = node.level;
+        for (const n of nodes) {
+            const ml = n.matrixLevel != null ? n.matrixLevel : n.level;
+            if (n.isCollapsed === false && ml > best) {
+                best = ml;
             }
-            node.children.forEach(walk);
-        };
-        this.lastTransform.rootNodes.forEach(walk);
+        }
         return best;
+    }
+
+    /** A representative expandable node at a MATRIX level (bulk expand/collapse),
+     *  preferring one whose collapsed-state matches, drawn from the full list. */
+    private findExpandNodeAtMatrixLevel(
+        matrixLevel: number,
+        wantCollapsed: boolean
+    ): RowTreeNode | undefined {
+        const nodes = this.lastTransform ? this.lastTransform.expandNodes : [];
+        let fallback: RowTreeNode | undefined;
+        for (const n of nodes) {
+            const ml = n.matrixLevel != null ? n.matrixLevel : n.level;
+            if (ml !== matrixLevel || n.isCollapsed === undefined) {
+                continue;
+            }
+            if (!fallback) {
+                fallback = n;
+            }
+            if (n.isCollapsed === wantCollapsed) {
+                return n;
+            }
+        }
+        return fallback;
     }
 
     // -----------------------------------------------------------------------
@@ -849,7 +854,14 @@ export class Visual implements IVisual {
             const activeRowFields = this.activeFields(discovered.rows, this.config.rows, "row");
             const activeValueFields = this.activeFields(discovered.values, this.config.values, "value");
             const activeColFields = this.activeFields(discovered.cols, this.config.cols, "col");
+            this.activeRowFields = activeRowFields;
             this.activeValueFields = activeValueFields;
+            // Per-VISIBLE-row-level subtotal toggles must track the current
+            // visibility set so a hidden level's subtotal row is suppressed and the
+            // toggle array stays aligned to the compacted display levels.
+            this.settings.subtotals.levels = activeRowFields.map((f) =>
+                this.readLevelEnabled(f.columnObjects)
+            );
             this.valueNameBySlot.clear();
             this.valueFormatBySlot.clear();
             this.specificColumnBySlot.clear();
@@ -870,10 +882,9 @@ export class Visual implements IVisual {
                 activeValueFields,
                 activeColFields,
                 this.settings,
-                () => undefined
+                this.hiddenRowLevels()
             );
             this.lastTransform = result;
-            this.lastDebug = result.debug;
             this.attachSelectionIds(result);
             this.sort.reconcile(activeRowFields, result.leafColumns, (c) => this.leafLabel(c));
             this.sort.applyNestedSort(result);
@@ -1043,6 +1054,24 @@ export class Visual implements IVisual {
     }
 
     /** Resolve the ordered, visible FieldMeta list for a role, applying renames. */
+    /**
+     * Matrix row levels the user has hidden. A row field's slotIndex equals its
+     * matrix hierarchy level (row fields are never reordered — hierarchy order is
+     * fixed by the field well), so a hidden entry's slotIndex is the matrix level
+     * to flatten out of the display tree. Visibility is a DISPLAY concern only: it
+     * never changes the projection/schema signature, so toggling it does not reset
+     * sort / selection / expansion state.
+     */
+    private hiddenRowLevels(): Set<number> {
+        const hidden = new Set<number>();
+        this.config.rows.forEach((e) => {
+            if (!e.visible) {
+                hidden.add(e.slotIndex);
+            }
+        });
+        return hidden;
+    }
+
     private activeFields(fields: FieldMeta[], entries: SlotEntry[], _role: ConfigRole): FieldMeta[] {
         const bySlot = new Map<number, FieldMeta>();
         fields.forEach((f) => bySlot.set(f.slotIndex, f));
@@ -1064,19 +1093,6 @@ export class Visual implements IVisual {
     // -----------------------------------------------------------------------
     // Helpers.
     // -----------------------------------------------------------------------
-
-    /** TEMP: combine transform diagnostics with the schema-change + sort tokens. */
-    private statusDebug(): string {
-        const parts = [this.lastDebug];
-        if (this.diagSchema) {
-            parts.push(this.diagSchema);
-        }
-        parts.push(this.sort.getDebugToken());
-        parts.push(this.sort.getSortedToken());
-        parts.push(this.sort.getKeyToken());
-        parts.push(`hclk:${this.hclk} dv:${this.dataView ? 1 : 0}`);
-        return parts.join(" ");
-    }
 
     private leafLabel(col: LeafColumn): string {
         return this.valueNameBySlot.get(col.valueSlotIndex) || `Value ${col.valueSlotIndex + 1}`;

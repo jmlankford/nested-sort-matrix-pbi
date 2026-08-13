@@ -3,12 +3,14 @@
  * --------------
  * The runtime configuration overlay. Slides up from the bottom and covers ~65%
  * of the visual height. Three independent tabs (Rows / Values / Column Fields),
- * each listing the active (populated) slots with: a drag handle, the field name,
- * an eye visibility toggle, and a session-rename text input.
+ * each listing the active (populated) slots with an eye visibility toggle, the
+ * field name, and — where applicable — a session-rename input.
  *
- * Reordering uses NATIVE HTML5 drag-and-drop (no external libraries). Reordering
- * within each tab is independent. Buttons: Reset (restore designer defaults) and
- * Done (apply + close).
+ * Under the Matrix DataView the row/column hierarchy order is fixed by the field
+ * well, so ONLY the Values tab can reorder (native HTML5 drag-and-drop, no
+ * external libraries). Rows keeps visibility + rename; Column Fields is
+ * visibility only. Buttons: Reset (restore designer defaults) and Done
+ * (apply + close).
  *
  * The panel edits a working clone; nothing is applied until Done is pressed.
  * Persistence (order + visibility) is performed by the visual via persistProperties;
@@ -204,6 +206,23 @@ export class ConfigPanel {
         this.listHost.textContent = "";
         const list = this.currentList();
 
+        // Per-tab capabilities. Under the Matrix DataView the hierarchy order of
+        // Rows and Column Fields is fixed by the field well, so those tabs cannot
+        // reorder (no drag handles). Renaming a column-pivot FIELD has no visible
+        // effect (pivot headers show data values, not the field name), so Column
+        // Fields offers visibility only. Values keeps drag + rename.
+        const allowDrag = this.activeTab === "values";
+        const allowRename = this.activeTab !== "cols";
+
+        // Rows tab: an inline note explaining that hierarchy order is not editable.
+        if (this.activeTab === "rows") {
+            const note = document.createElement("div");
+            note.className = "nsm-config-note";
+            note.textContent =
+                "Hierarchy order comes from the field well. Hiding a level flattens it out of the display; its children move up under the level above.";
+            this.listHost.appendChild(note);
+        }
+
         if (list.length === 0) {
             const empty = document.createElement("div");
             empty.className = "nsm-config-empty";
@@ -213,61 +232,73 @@ export class ConfigPanel {
         }
 
         list.forEach((entry, index) => {
-            this.listHost.appendChild(this.renderEntry(entry, index, list));
+            this.listHost.appendChild(this.renderEntry(entry, index, list, allowDrag, allowRename));
         });
     }
 
-    private renderEntry(entry: SlotEntry, index: number, list: SlotEntry[]): HTMLElement {
+    private renderEntry(
+        entry: SlotEntry,
+        index: number,
+        list: SlotEntry[],
+        allowDrag: boolean,
+        allowRename: boolean
+    ): HTMLElement {
         const row = document.createElement("div");
         row.className = "nsm-config-item";
-        row.setAttribute("draggable", "true");
         row.dataset.index = String(index);
         if (!entry.visible) {
             row.classList.add("hidden-field");
         }
+        if (!allowDrag) {
+            row.classList.add("no-drag");
+        }
 
-        // --- Native HTML5 drag-and-drop ---
-        row.addEventListener("dragstart", (e: DragEvent) => {
-            this.dragIndex = index;
-            row.classList.add("dragging");
-            if (e.dataTransfer) {
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", String(index));
-            }
-        });
-        row.addEventListener("dragend", () => {
-            this.dragIndex = -1;
-            row.classList.remove("dragging");
-            this.listHost
-                .querySelectorAll(".nsm-config-item.drop-target")
-                .forEach((el) => el.classList.remove("drop-target"));
-        });
-        row.addEventListener("dragover", (e: DragEvent) => {
-            e.preventDefault();
-            if (e.dataTransfer) {
-                e.dataTransfer.dropEffect = "move";
-            }
-            row.classList.add("drop-target");
-        });
-        row.addEventListener("dragleave", () => {
-            row.classList.remove("drop-target");
-        });
-        row.addEventListener("drop", (e: DragEvent) => {
-            e.preventDefault();
-            row.classList.remove("drop-target");
-            const from = this.dragIndex;
-            const to = index;
-            if (from >= 0 && from !== to) {
-                this.reorder(list, from, to);
-                this.renderList();
-            }
-        });
+        // --- Native HTML5 drag-and-drop (Values tab only) ---
+        if (allowDrag) {
+            row.setAttribute("draggable", "true");
+            row.addEventListener("dragstart", (e: DragEvent) => {
+                this.dragIndex = index;
+                row.classList.add("dragging");
+                if (e.dataTransfer) {
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", String(index));
+                }
+            });
+            row.addEventListener("dragend", () => {
+                this.dragIndex = -1;
+                row.classList.remove("dragging");
+                this.listHost
+                    .querySelectorAll(".nsm-config-item.drop-target")
+                    .forEach((el) => el.classList.remove("drop-target"));
+            });
+            row.addEventListener("dragover", (e: DragEvent) => {
+                e.preventDefault();
+                if (e.dataTransfer) {
+                    e.dataTransfer.dropEffect = "move";
+                }
+                row.classList.add("drop-target");
+            });
+            row.addEventListener("dragleave", () => {
+                row.classList.remove("drop-target");
+            });
+            row.addEventListener("drop", (e: DragEvent) => {
+                e.preventDefault();
+                row.classList.remove("drop-target");
+                const from = this.dragIndex;
+                const to = index;
+                if (from >= 0 && from !== to) {
+                    this.reorder(list, from, to);
+                    this.renderList();
+                }
+            });
 
-        // Drag handle.
-        const handle = document.createElement("span");
-        handle.className = "nsm-config-handle";
-        handle.textContent = "⋮⋮";
-        handle.title = "Drag to reorder";
+            // Drag handle.
+            const handle = document.createElement("span");
+            handle.className = "nsm-config-handle";
+            handle.textContent = "⋮⋮";
+            handle.title = "Drag to reorder";
+            row.appendChild(handle);
+        }
 
         // Visibility toggle.
         const eye = document.createElement("button");
@@ -285,22 +316,24 @@ export class ConfigPanel {
         name.className = "nsm-config-name";
         name.textContent = entry.originalName || `(slot ${entry.slotIndex + 1})`;
 
-        // Rename input.
-        const input = document.createElement("input");
-        input.className = "nsm-config-rename";
-        input.type = "text";
-        input.placeholder = entry.originalName;
-        input.value = entry.rename != null ? entry.rename : "";
-        input.addEventListener("click", (ev) => ev.stopPropagation());
-        input.addEventListener("input", () => {
-            const v = input.value.trim();
-            entry.rename = v.length > 0 ? v : null;
-        });
-
-        row.appendChild(handle);
         row.appendChild(eye);
         row.appendChild(name);
-        row.appendChild(input);
+
+        // Rename input (Rows + Values).
+        if (allowRename) {
+            const input = document.createElement("input");
+            input.className = "nsm-config-rename";
+            input.type = "text";
+            input.placeholder = entry.originalName;
+            input.value = entry.rename != null ? entry.rename : "";
+            input.addEventListener("click", (ev) => ev.stopPropagation());
+            input.addEventListener("input", () => {
+                const v = input.value.trim();
+                entry.rename = v.length > 0 ? v : null;
+            });
+            row.appendChild(input);
+        }
+
         return row;
     }
 
