@@ -38,11 +38,7 @@ Configuration persists via `persistProperties` across report saves and reloads. 
 - Conditional formatting optionally applied to totals
 
 ### Conditional Formatting
-Configured by **right-clicking a value column header**, which opens the in-visual CF panel. Four types:
-- **Color Scale** — min/mid/max gradient with hex color inputs and percent-of-range basis option
-- **Rules** — multiple rules with AND compound conditions. Operators: >=, >, <=, <, =, !=, between, is blank, is not blank. First match wins.
-- **Data Bars** — horizontal bars in cell background, configurable positive/negative colors
-- **Field Value** — a bound measure returns a hex string (e.g. `#FF6B6B`) applied as background and/or font color
+Conditional formatting is configured **per measure through the format pane's `fx` dialog** (font color / background color under **Values**), the native Power BI CF experience — supporting constant colors, rules (gradients / rule-based), and field-value colors with hex input. The evaluator applies color scales, rules, data bars, and icon sets to cells at render time. (The earlier in-visual CF panel was removed; the format-pane `fx` dialog fully covers CF and is the supported path. Persisted CF from older reports still renders.)
 
 ### Value Formatting (per measure)
 - Font family, size, bold, italic
@@ -70,6 +66,12 @@ Final override layer applied after value formatting and conditional formatting:
 - Click empty space to clear selection
 - Toggleable via format pane
 
+### Clipboard Copy (TSV)
+Because the host does not expose cell-level Copy to custom visuals, the visual provides its own TSV clipboard copy (tab-separated columns, newline-separated rows — clean Excel paste), using the formatted display strings and a leading header row.
+- **Row copy** — select rows (click / Ctrl+click / Shift+click, any row kind), then **Ctrl+C** or right-click → **Copy selection**. Copies the visible row-field ancestor labels + all visible value columns in display order. Right-click does not alter selection or cross-filter.
+- **Column copy** — right-click a value column header to select it (Ctrl adds columns; selected columns are highlighted), then **Ctrl+C** or **Copy column**. Copies **only the rows at the deepest currently-visible hierarchy level** (a flat single-grain extract — parent, subtotal, and grand-total rows excluded), with ancestor label columns for context.
+- **Escape** clears row and column selection. A transient status-bar confirmation ("Copied N rows") reports success; if the sandbox blocks the clipboard APIs, a small panel presents the text for manual copy.
+
 ---
 
 ## Field Wells
@@ -89,9 +91,9 @@ Field well order sets the row/column hierarchy. Under the Matrix DataView this o
 | Section | Contents |
 |---|---|
 | Grid | Row height mode, fixed height px, cell font size, value cell font |
-| Row Headers | Bold, font size, wrap header text, indent per level, font family |
+| Row Headers | Bold, font size, wrap header text, header alignment, indent per level, font family |
 | Layout | Layout mode (Compact/Outline/Tabular), repeat row headers |
-| Column Headers | Bold, font size, show sort arrows, wrap header text, font family |
+| Column Headers | Bold, font size, show sort arrows, wrap header text, header alignment, font family |
 | Expand/Collapse Buttons | Show/hide, button size, button color, style |
 | Subtotals & Totals | Row/column subtotals, grand total row/column, label text, apply CF to totals, per-field level toggles |
 | Alternate Row Color | On/off, color |
@@ -159,16 +161,25 @@ The visual declares **no explicit `dataReductionAlgorithm`** on the matrix rows 
 
 ---
 
-## Other Notes
+## Known Limitations
 
-### CF Rules — Compound Conditions
+### Cell-level Copy is a platform limitation
+Custom visuals cannot invoke the host's cell-level **Copy value** / **Copy selection** — those context-menu commands are exclusive to first-party visuals. That is exactly why this visual ships its own TSV clipboard copy (see [Clipboard Copy](#clipboard-copy-tsv)): row copy via selection + Ctrl+C / right-click, and column copy via right-clicking a value header.
+
+### Hiding a row level is display-only
+Hiding a row level in the Setup panel flattens it out of the *display* (children re-parent up under the level above), but it does **not** reduce query cost — the level is still projected and evaluated by the engine. Visibility is a rendering concern, so toggling it never resets sort / selection / expansion, but it is not a way to make a large hierarchy cheaper. To reduce query cost, remove the field from the field well.
+
+### Column copy targets the deepest visible level
+Column copy extracts a flat, single-grain slice at the **deepest currently-visible hierarchy level**. If a selected measure is a parent-grain measure guarded with `ISINSCOPE` (so it returns `BLANK()` below its intended level — see [Measure Design](#measure-design-for-this-visual)), then copying that column while invoices are expanded yields **blank** values for it, because at the invoice grain the measure is legitimately blank. Copy at the grain where the measure is in scope (collapse to that level), or select an additive measure.
+
+### CF rules — compound conditions
 To filter a value range (e.g. between 1000 and 9999), use the `+ AND` button within a single rule row. Do not create two separate rules — each rule is evaluated independently and "first match wins" means the second rule will catch values that failed the first.
 
-### Cell-Level Copy
-Custom visuals cannot offer cell-level **Copy value** / **Copy selection** — those context-menu commands are exclusive to first-party visuals (a platform limitation). Right-clicking a row opens the standard custom-visual context menu (Include/Exclude/Show as a table); right-clicking a **value column header** opens the conditional-formatting panel.
-
-### Session Renames
+### Session renames
 Field renames in the configuration panel are session-only and reset on data refresh. They are cosmetic display overrides, not persistent metadata changes.
+
+### Large hierarchies / data reduction
+No explicit `dataReductionAlgorithm` is declared and `fetchMoreData` is not implemented (see [Data Reduction](#data-reduction)); extremely large expansions may be capped by the host's default window.
 
 ### `getFormattingModel()` API
 This visual uses `getFormattingModel()` for format pane rendering, which is the current recommended API for Power BI Report Server September 2025.
@@ -234,11 +245,13 @@ For full conditional formatting dialog support (`fx` button on color pickers), P
 │   ├── dataTransformer.ts     # Matrix DataView → RowTreeNode tree, pivot, level flatten
 │   ├── renderer.ts            # D3 rendering, headers, rows, cells, resize handles
 │   ├── virtualScroller.ts     # Viewport row virtualization, DOM node recycling
-│   ├── configPanel.ts         # Setup panel overlay, HTML5 drag-and-drop
-│   ├── cfPanel.ts             # Conditional formatting panel, rules builder
+│   ├── configPanel.ts         # Setup panel overlay (visibility, rename, value reorder)
 │   ├── statusBar.ts           # Status bar rendering and interactions
-│   ├── sortManager.ts         # Nested sort state, scoped sort application
+│   ├── sortManager.ts         # Single-active-sort state, scoped sort application
 │   ├── conditionalFormatter.ts # CF evaluation: color scale, rules, data bars, icons
+│   ├── cfTypes.ts             # Shared CF type definitions (consumed by CF evaluator + settings)
+│   ├── clipboard.ts           # TSV clipboard write (execCommand → clipboard API → manual panel)
+│   ├── contextMenu.ts         # Minimal right-click copy menu
 │   ├── selectionManager.ts    # ISelectionManager wrapper, multi/range select
 │   ├── settings.ts            # Format pane settings classes and DataView parsers
 │   └── styles/
@@ -284,3 +297,4 @@ Or use the helper script:
 | 1.0.1.0 | Data binding fix (stacked field wells), layout modes, CF panel, getFormattingModel() migration |
 | 1.0.2.0 | CF panel fixes (visibility, click-outside handling, defaultColor, AND compound rules), tabular group row suppression |
 | 3.0.0.0 | **Matrix DataView migration.** Replaced Table DataView + client-side grouping with the Matrix DataView: engine-computed values at every hierarchy level (level-aware and non-additive measures now correct), native host expand/collapse with per-level and Expand/Collapse-All controls, scroll anchoring, single-active-sort model, query subtotals decoupled from the subtotal-row render toggle, row-level hiding as a display flatten, header word wrap, raw scroll preservation on sort, and text-measure support. Runtime hierarchy reordering moves to the report-layer field-parameter pattern. |
+| 3.2.0.0 | **Release.** Row-field sort now orders every hierarchy depth by the node's own displayed label (was a silent no-op below the apex for numeric-keyed levels); tabular child row-field headers are clickable to sort with indicator arrows. Header text alignment (Left/Center/Right) for row and column headers; tighter wrapped-header padding. In-visual CF panel removed in favor of the format-pane `fx` dialog. Native TSV clipboard copy for row and column selections (column copy extracts at the deepest visible level). Cross-filter reliably resets scroll to the top; sort preserves scroll position. |

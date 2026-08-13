@@ -526,38 +526,6 @@ export class Renderer {
         return { text: lines.join("\n"), count: extract.length };
     }
 
-    /**
-     * TEMP (Item B): diagnostic for the column-copy investigation. Reports the
-     * selection size, how many of those ids matched leaf columns, the extract row
-     * count and its level, and the first extract row's value for the first matched
-     * column — pinpointing whether the failure is a lost selection (sel:0), an id
-     * mismatch (cols:0), an empty extract (ext:0), or a genuinely blank value
-     * (v0:null/undef, e.g. an ISINSCOPE-guarded measure at the deepest grain).
-     */
-    public columnCopyDiag(selectedColIds: Set<string>): string {
-        const input = this.current;
-        if (!input) {
-            return "cc:no-input";
-        }
-        const t = input.transform;
-        let maxLevel = -1;
-        for (const r of this.lastDisplayRows) {
-            if ((r.kind === "leaf" || r.kind === "group") && r.level > maxLevel) {
-                maxLevel = r.level;
-            }
-        }
-        const extract = this.lastDisplayRows.filter(
-            (r) => (r.kind === "leaf" || r.kind === "group") && r.level === maxLevel
-        );
-        const cols = t.leafColumns.filter((c) => selectedColIds.has(c.id));
-        let v0 = "n/a";
-        if (extract.length > 0 && cols.length > 0) {
-            const raw = extract[0].node.values[cols[0].id];
-            v0 = raw === undefined ? "undef" : raw === null ? "null" : String(raw);
-        }
-        return `cc sel:${selectedColIds.size} cols:${cols.length} ext:${extract.length}@L${maxLevel} v0:${v0}`;
-    }
-
     /** Raw scroll offset in px. Used by the SORT path to preserve the exact
      *  fractional scroll position (a sort keeps row count + height, so the same
      *  pixel offset maps to the same place) rather than pinning a specific node. */
@@ -1041,7 +1009,7 @@ export class Renderer {
             const expanded = isExpandedNode(node);
             const stEnabled = subtotalOn(node.level);
 
-            // Unified across all layout modes (Item B): the group HEADER row is
+            // Unified across all layout modes: the group HEADER row is
             // always emitted at the TOP of its level and is the sole host of the
             // +/- control. A collapsed group shows just this row (its engine
             // aggregate); an expanded group shows this row, then its children, then

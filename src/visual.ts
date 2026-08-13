@@ -86,10 +86,6 @@ export class Visual implements IVisual {
     private readonly manualCopy: ManualCopyPanel;
     /** Value-column leaf ids currently selected for a column copy. */
     private selectedColumnIds = new Set<string>();
-    /** TEMP (Q2): per-level row-field header click counts, shown in the status bar
-     *  as rfclk:L<level>:<count> to prove whether child-header clicks fire. */
-    private rfClkCounts: number[] = [];
-    private rfClkLast = "";
     /** Document-level Ctrl+C / Escape handler (stored so it can be detached). */
     private readonly onKeyDown = (e: KeyboardEvent): void => {
         // Let native copy work inside text fields (rename inputs, manual-copy box).
@@ -290,7 +286,7 @@ export class Visual implements IVisual {
         if (schemaChanged) {
             // Full refresh: reset volatile session state. The ACTIVE SORT is
             // deliberately NOT reset here — adding or removing a bound field must
-            // never change the active sort (Item B); reconcile() keeps it and only
+            // never change the active sort; reconcile() keeps it and only
             // refreshes its label, so a field add leaves the current sort untouched
             // (and leaves the visual unsorted when nothing was active).
             this.selection.reset();
@@ -399,8 +395,7 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: result.rowCount,
-            allExpanded: this.computeAllExpanded(result),
-            debug: this.diagString()
+            allExpanded: this.computeAllExpanded(result)
         });
 
         // Continue a bulk Expand All / Collapse All in progress (Part B global).
@@ -423,12 +418,8 @@ export class Visual implements IVisual {
             specificColumnFor: (slot) => this.specificColumnBySlot.get(slot) || DEFAULTS.specificColumn,
             cfFor: (slot) => this.cfBySlot.get(slot) || DEFAULTS.cf,
             leafLabelFor: (col) => this.leafLabel(col),
-            onRowFieldSort: (level, label) => {
-                // TEMP (Q2): record that a row-field header click fired at this level.
-                this.rfClkCounts[level] = (this.rfClkCounts[level] || 0) + 1;
-                this.rfClkLast = `rfclk:L${level}:${this.rfClkCounts[level]}`;
-                this.applySortToggle(() => this.sort.toggleRowField(level, label));
-            },
+            onRowFieldSort: (level, label) =>
+                this.applySortToggle(() => this.sort.toggleRowField(level, label)),
             onValueSort: (leafColId, label) =>
                 this.applySortToggle(() => this.sort.toggleValue(leafColId, label)),
             onColumnSort: () => this.applySortToggle(() => this.sort.toggleColumnDirection()),
@@ -483,15 +474,8 @@ export class Visual implements IVisual {
             visible: this.settings.statusBar.show,
             sortText: this.sort.getStackText(80),
             rowCount: this.lastTransform.rowCount,
-            allExpanded: this.computeAllExpanded(this.lastTransform),
-            debug: this.diagString()
+            allExpanded: this.computeAllExpanded(this.lastTransform)
         });
-    }
-
-    /** TEMP (Item A + Q2): combined status-bar diagnostic. */
-    private diagString(): string {
-        const sd = this.sort.getSortDiag();
-        return this.rfClkLast ? `${sd}  ${this.rfClkLast}` : sd;
     }
 
     /** Re-render the body only (selection change) without recomputing layout. */
@@ -575,14 +559,12 @@ export class Visual implements IVisual {
 
     /** Copy the selected value columns (deepest rendered level rows) as TSV. */
     private copyColumns(): void {
-        // TEMP (Item B): surface the copy-state diagnostic instead of the normal
-        // "Copied N rows" confirmation so the failure mode is visible on device.
-        const diag = this.renderer.columnCopyDiag(this.selectedColumnIds);
         const tsv = this.renderer.buildColumnCopyTSV(this.selectedColumnIds);
-        if (tsv) {
-            copyText(tsv.text, (t) => this.manualCopy.show(t));
+        if (!tsv) {
+            this.statusBar.flash("Nothing to copy");
+            return;
         }
-        this.statusBar.flash(diag, 6000);
+        this.doCopy(tsv.text, tsv.count);
     }
 
     /** Write text to the clipboard and flash a transient status confirmation. */
