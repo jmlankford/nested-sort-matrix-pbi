@@ -138,6 +138,10 @@ export class Visual implements IVisual {
     private pocApplied: string = "";
     /** Round-trip: the jsonFilters string received back in the last update. */
     private pocJsonFilters: string = "";
+    /** The serialized filter object last handed to applyJsonFilter (for the dump). */
+    private pocLastFilterJson: string = "";
+    /** Any error thrown synchronously by applyJsonFilter (empty if none). */
+    private pocLastError: string = "";
     /** Guard: true on the update caused by our own applyJsonFilter, so we never
      *  re-apply in response to our own filter (this POC only applies on click). */
     private pocSelfFilterPending = false;
@@ -219,7 +223,8 @@ export class Visual implements IVisual {
         this.statusBar = new StatusBar(this.target, {
             onSetup: () => this.openConfig(),
             onToggleExpandAll: (expand) => this.toggleExpandAll(expand),
-            onTestParam: () => this.pocTestSwitch()
+            onTestParam: () => this.pocTestSwitch(),
+            onDumpColumns: () => this.pocDumpColumns()
         });
 
         this.configPanel = new ConfigPanel(this.target, {
@@ -579,14 +584,77 @@ export class Visual implements IVisual {
         const next = candidates[idx];
         this.pocApplied = next;
 
+        // Build the filter and record its serialized form so the dump / status bar
+        // can show exactly what we handed the host ($schema, target, operator, values).
         const filter = new BasicFilter(target, "In", next);
+        try {
+            this.pocLastFilterJson = JSON.stringify(filter);
+        } catch {
+            this.pocLastFilterJson = "(unserializable)";
+        }
+        this.pocLastError = "";
         this.pocSelfFilterPending = true;
+        // NOTE: FilterAction has only merge (0) and remove (1) — there is no
+        // "replace". merge on the SAME objectName/propertyName overwrites the prior
+        // filter for that property, so merge already behaves as replace here.
         try {
             this.host.applyJsonFilter(filter, "general", "filter", FilterAction.merge);
-        } catch {
+        } catch (e) {
             this.pocSelfFilterPending = false;
-            this.statusBar.flash("POC: applyJsonFilter threw", 4000);
+            this.pocLastError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+            this.statusBar.flash("POC: applyJsonFilter threw — see Dump columns", 4000);
         }
+    }
+
+    /**
+     * Dump every metadata column (displayName, queryName, roles, and the derived
+     * table/column split) plus the last filter JSON, any thrown error, and the
+     * jsonFilters round-trip. Shown in the manual-copy panel so the report author
+     * can read the TRUE filter target and copy it out.
+     */
+    private pocDumpColumns(): void {
+        const lines: string[] = [];
+        lines.push("=== Reorder POC — column / target diagnostic ===");
+        lines.push("");
+        lines.push("Filter property declared in capabilities: objects.general.filter { filter: true }");
+        lines.push('applyJsonFilter called with objectName="general", propertyName="filter", action=merge(0)');
+        lines.push("FilterAction enum has only merge(0) and remove(1) — there is no replace.");
+        lines.push("");
+
+        const cols =
+            this.dataView && this.dataView.metadata && this.dataView.metadata.columns
+                ? this.dataView.metadata.columns
+                : [];
+        lines.push(`metadata.columns: ${cols.length} column(s)`);
+        lines.push("For a filter target, type table = <text before the first dot>, column = <text after it>.");
+        lines.push("");
+        cols.forEach((c, i) => {
+            const qn = c.queryName || "";
+            const dot = qn.indexOf(".");
+            const tbl = dot > 0 ? qn.substring(0, dot) : "(no dot)";
+            const col = dot > 0 ? qn.substring(dot + 1) : qn;
+            const roles = c.roles ? Object.keys(c.roles).join(",") : "";
+            lines.push(`[${i}] displayName="${c.displayName}"`);
+            lines.push(`     queryName="${qn}"`);
+            lines.push(`     -> table="${tbl}" column="${col}"`);
+            lines.push(`     roles=[${roles}] isMeasure=${!!c.isMeasure}`);
+        });
+        lines.push("");
+        lines.push("--- last filter handed to applyJsonFilter ---");
+        lines.push(this.pocLastFilterJson || "(none applied yet)");
+        lines.push("");
+        lines.push(`last applyJsonFilter error: ${this.pocLastError || "(none)"}`);
+        lines.push(`current options.jsonFilters round-trip: ${this.pocJsonFilters}`);
+        lines.push(`current typed target: ${this.pocDiagTarget()}`);
+        lines.push(`current candidates: [${this.pocCandidates().join(" | ") || "-"}]`);
+
+        this.manualCopy.show(lines.join("\n"));
+    }
+
+    /** Human-readable current typed target for the diagnostics. */
+    private pocDiagTarget(): string {
+        const target = this.pocTarget();
+        return target ? `table="${target.table}" column="${target.column}"` : "(incomplete)";
     }
 
     /** Compact POC diagnostic for the status bar. */
@@ -594,7 +662,8 @@ export class Visual implements IVisual {
         const target = this.pocTarget();
         const tgt = target ? `${target.table}.${target.column}` : "(none)";
         const cands = this.pocCandidates().join("|") || "-";
-        return `poc tgt:${tgt} cand:[${cands}] applied:${this.pocApplied || "-"} jf:${this.pocJsonFilters}`;
+        const err = this.pocLastError ? ` err:${this.pocLastError}` : "";
+        return `poc tgt:${tgt} cand:[${cands}] applied:${this.pocApplied || "-"} jf:${this.pocJsonFilters}${err}`;
     }
 
     /** Re-render the body only (selection change) without recomputing layout. */

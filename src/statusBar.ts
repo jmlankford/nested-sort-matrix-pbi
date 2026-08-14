@@ -14,6 +14,8 @@ export interface StatusBarCallbacks {
     onToggleExpandAll: (expand: boolean) => void;
     /** POC (Item A): cycle the field-parameter selection via applyJsonFilter. */
     onTestParam: () => void;
+    /** POC (Item A): dump every metadata column's queryName for target discovery. */
+    onDumpColumns: () => void;
 }
 
 export interface StatusBarState {
@@ -32,6 +34,7 @@ export class StatusBar {
     private readonly setupBtn: HTMLElement;
     private readonly expandBtn: HTMLElement;
     private readonly testParamBtn: HTMLElement;
+    private readonly dumpColsBtn: HTMLElement;
     private readonly sortLabel: HTMLElement;
     private readonly rowCountLabel: HTMLElement;
     private readonly debugLabel: HTMLElement;
@@ -82,12 +85,24 @@ export class StatusBar {
             this.callbacks.onTestParam();
         });
 
+        // POC (Item A): "Dump columns" button — reveals every column's queryName so
+        // the report author can type the true filter target.
+        this.dumpColsBtn = document.createElement("button");
+        this.dumpColsBtn.className = "nsm-statusbar-btn";
+        this.dumpColsBtn.textContent = "Dump columns";
+        this.dumpColsBtn.title = "POC: dump every column's queryName for filter-target discovery";
+        this.dumpColsBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.callbacks.onDumpColumns();
+        });
+
         this.sortLabel = document.createElement("span");
         this.sortLabel.className = "nsm-statusbar-sort";
 
         left.appendChild(this.setupBtn);
         left.appendChild(this.expandBtn);
         left.appendChild(this.testParamBtn);
+        left.appendChild(this.dumpColsBtn);
         left.appendChild(this.sortLabel);
 
         const right = document.createElement("div");
