@@ -131,11 +131,9 @@ export class Visual implements IVisual {
     private knownCols: FieldMeta[] = [];
 
     // ---- POC (Item A): drive a field-parameter selection via applyJsonFilter ----
-    /** Filter target (table.column) derived from the Reorder Control binding. */
-    private pocTarget: IFilterColumnTarget | null = null;
-    /** Accumulated distinct candidate values from the Reorder Control column
-     *  (retained across updates so the list survives once the filter narrows it). */
-    private pocCandidates: (string | number | boolean)[] = [];
+    // Target and candidates come from format-pane text properties the report
+    // author types (Reorder POC card) — NO data binding. BasicFilter's target is a
+    // plain { table, column } object, so no bound column is needed to construct it.
     /** The value we last applied (so the button cycles to the NEXT one). */
     private pocApplied: string = "";
     /** Round-trip: the jsonFilters string received back in the last update. */
@@ -249,10 +247,10 @@ export class Visual implements IVisual {
             options.dataViews && options.dataViews.length ? options.dataViews[0] : undefined;
         this.dataView = dataView;
 
-        // POC (Item A): read the Reorder Control binding (target + candidates) and
-        // the jsonFilters round-trip. Applying filters happens ONLY on the button
-        // click, never here, so our own filter can't trigger a re-apply loop.
-        this.pocReadReorderControl(options);
+        // POC (Item A): capture the jsonFilters round-trip so the status bar can
+        // show what the host reports back. Applying filters happens ONLY on the
+        // button click, never here, so our own filter can't trigger a re-apply loop.
+        this.pocCaptureJsonFilters(options);
 
         const metadataObjects = dataView && dataView.metadata ? dataView.metadata.objects : undefined;
         this.settings = parseVisualSettings(metadataObjects);
@@ -534,45 +532,12 @@ export class Visual implements IVisual {
     // -----------------------------------------------------------------------
 
     /**
-     * Read the Reorder Control binding from the categorical dataView delivered
-     * alongside the matrix, deriving the filter target (table.column) and the
-     * candidate values, and capture the jsonFilters round-trip. Applying filters is
+     * Capture the jsonFilters round-trip so the status bar can echo what the host
+     * currently reports back. The filter target and candidates come from the
+     * format pane (Reorder POC card), not from any binding. Applying filters is
      * done only in pocTestSwitch (on button click).
      */
-    private pocReadReorderControl(options: VisualUpdateOptions): void {
-        // The matrix + categorical mappings both populate the same dataView; find a
-        // dataView that carries a categorical projection.
-        const dvs = options.dataViews || [];
-        let cat: powerbi.DataViewCategorical | undefined;
-        for (const dv of dvs) {
-            if (dv && dv.categorical && dv.categorical.categories && dv.categorical.categories.length) {
-                cat = dv.categorical;
-                break;
-            }
-        }
-        if (cat && cat.categories && cat.categories[0]) {
-            const col = cat.categories[0];
-            const qn = col.source && col.source.queryName ? col.source.queryName : "";
-            const dot = qn.indexOf(".");
-            this.pocTarget =
-                dot > 0
-                    ? { table: qn.substring(0, dot), column: col.source.displayName }
-                    : null;
-            // Accumulate distinct candidate values (retain across filter narrowing).
-            (col.values || []).forEach((v) => {
-                if (v === null || v === undefined) {
-                    return;
-                }
-                const val = v as string | number | boolean;
-                if (!this.pocCandidates.some((c) => String(c) === String(val))) {
-                    this.pocCandidates.push(val);
-                }
-            });
-        } else {
-            this.pocTarget = null;
-        }
-
-        // Round-trip: what filter the host currently reports back to us.
+    private pocCaptureJsonFilters(options: VisualUpdateOptions): void {
         const jf = options.jsonFilters;
         this.pocJsonFilters = jf && jf.length ? JSON.stringify(jf) : "none";
         // This update reflects our own filter; nothing further to do (we never
@@ -580,19 +545,41 @@ export class Visual implements IVisual {
         this.pocSelfFilterPending = false;
     }
 
+    /** Parse the format-pane target ({ table, column }) or null if incomplete. */
+    private pocTarget(): IFilterColumnTarget | null {
+        const p = this.settings.reorderPoc;
+        const table = (p.paramTable || "").trim();
+        const column = (p.paramColumn || "").trim();
+        return table && column ? { table, column } : null;
+    }
+
+    /** Parse the comma-separated candidate values from the format pane. */
+    private pocCandidates(): string[] {
+        return (this.settings.reorderPoc.candidates || "")
+            .split(",")
+            .map((v) => v.trim())
+            .filter((v) => v.length > 0);
+    }
+
     /** Cycle the field-parameter selection to the NEXT candidate via a BasicFilter. */
     private pocTestSwitch(): void {
-        if (!this.pocTarget || this.pocCandidates.length === 0) {
-            this.statusBar.flash("POC: no Reorder Control binding / candidates", 4000);
+        const target = this.pocTarget();
+        const candidates = this.pocCandidates();
+        if (!target) {
+            this.statusBar.flash("POC: set Parameter table + column in the Reorder POC card", 4000);
+            return;
+        }
+        if (candidates.length === 0) {
+            this.statusBar.flash("POC: set Candidate values in the Reorder POC card", 4000);
             return;
         }
         // Determine the next candidate after the last-applied one (cycle).
-        let idx = this.pocCandidates.findIndex((c) => String(c) === this.pocApplied);
-        idx = (idx + 1) % this.pocCandidates.length;
-        const next = this.pocCandidates[idx];
-        this.pocApplied = String(next);
+        let idx = candidates.findIndex((c) => c === this.pocApplied);
+        idx = (idx + 1) % candidates.length;
+        const next = candidates[idx];
+        this.pocApplied = next;
 
-        const filter = new BasicFilter(this.pocTarget, "In", next);
+        const filter = new BasicFilter(target, "In", next);
         this.pocSelfFilterPending = true;
         try {
             this.host.applyJsonFilter(filter, "general", "filter", FilterAction.merge);
@@ -604,10 +591,9 @@ export class Visual implements IVisual {
 
     /** Compact POC diagnostic for the status bar. */
     private pocDiag(): string {
-        const tgt = this.pocTarget
-            ? `${this.pocTarget.table}.${this.pocTarget.column}`
-            : "(none)";
-        const cands = this.pocCandidates.map((c) => String(c)).join("|") || "-";
+        const target = this.pocTarget();
+        const tgt = target ? `${target.table}.${target.column}` : "(none)";
+        const cands = this.pocCandidates().join("|") || "-";
         return `poc tgt:${tgt} cand:[${cands}] applied:${this.pocApplied || "-"} jf:${this.pocJsonFilters}`;
     }
 
@@ -1621,6 +1607,31 @@ export class Visual implements IVisual {
                 uid: "card-crossFilter",
                 displayName: "Cross-Filter",
                 groups: [{ uid: "crossFilter-g", displayName: "", slices: [toggle("Enable", d[0], s.crossFilter.show)] }],
+                revertToDefaultDescriptors: d
+            });
+        }
+
+        // ---- Reorder POC (Item A) — temporary; target typed by the author, no binding ----
+        {
+            const d = [
+                desc("reorderPoc", "paramTable"),
+                desc("reorderPoc", "paramColumn"),
+                desc("reorderPoc", "candidates")
+            ];
+            cards.push({
+                uid: "card-reorderPoc",
+                displayName: "Reorder POC",
+                groups: [
+                    {
+                        uid: "reorderPoc-g",
+                        displayName: "",
+                        slices: [
+                            text("Parameter table name", d[0], s.reorderPoc.paramTable),
+                            text("Parameter column name", d[1], s.reorderPoc.paramColumn),
+                            text("Candidate values (comma-separated)", d[2], s.reorderPoc.candidates)
+                        ]
+                    }
+                ],
                 revertToDefaultDescriptors: d
             });
         }

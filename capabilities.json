@@ -15,12 +15,6 @@
       "name": "values",
       "displayName": "Values",
       "kind": "Measure"
-    },
-    {
-      "name": "reorderControl",
-      "displayName": "Reorder Control (POC)",
-      "description": "POC: bind a field parameter's key column here so the visual can drive its selection via the filter API.",
-      "kind": "Grouping"
     }
   ],
 
@@ -37,11 +31,6 @@
           "select": [
             { "for": { "in": "values" } }
           ]
-        }
-      },
-      "categorical": {
-        "categories": {
-          "for": { "in": "reorderControl" }
         }
       }
     }
@@ -481,6 +470,15 @@
       "displayName": "Cross-Filter",
       "properties": {
         "show": { "displayName": "Enable", "type": { "bool": true } }
+      }
+    },
+    "reorderPoc": {
+      "displayName": "Reorder POC",
+      "description": "POC: type a field parameter's table/column and its candidate values so the visual can drive its selection via the filter API. No data binding required.",
+      "properties": {
+        "paramTable": { "displayName": "Parameter table name", "type": { "text": true } },
+        "paramColumn": { "displayName": "Parameter column name", "type": { "text": true } },
+        "candidates": { "displayName": "Candidate values (comma-separated)", "type": { "text": true } }
       }
     }
   },

@@ -130,6 +130,13 @@ export interface CrossFilterSettings {
     show: boolean;
 }
 
+/** POC (Item A): filter-target strings typed by the report author. No binding. */
+export interface ReorderPocSettings {
+    paramTable: string;
+    paramColumn: string;
+    candidates: string;
+}
+
 /** Per-slot value formatting (font, color, and number formatting). */
 export interface ValueFormatSettings {
     fontFamily: string;
@@ -210,6 +217,8 @@ export interface VisualSettings {
     alternateRows: AlternateRowSettings;
     statusBar: StatusBarSettings;
     crossFilter: CrossFilterSettings;
+    /** POC (Item A): filter-target strings typed into the format pane. */
+    reorderPoc: ReorderPocSettings;
     /** Persisted config-panel state (JSON string), read from `general.configState`. */
     configState: string;
     /** Persisted column widths (JSON string), read from `general.columnWidths`. */
@@ -271,6 +280,11 @@ export const DEFAULTS = {
     },
     crossFilter: {
         show: true
+    },
+    reorderPoc: {
+        paramTable: "",
+        paramColumn: "",
+        candidates: ""
     },
     valueFormat: {
         fontFamily: "Segoe UI",
@@ -576,6 +590,11 @@ export function parseVisualSettings(metadataObjects: DataViewObjects | undefined
         },
         crossFilter: {
             show: getBool(metadataObjects, "crossFilter", "show", DEFAULTS.crossFilter.show)
+        },
+        reorderPoc: {
+            paramTable: getText(metadataObjects, "reorderPoc", "paramTable", DEFAULTS.reorderPoc.paramTable),
+            paramColumn: getText(metadataObjects, "reorderPoc", "paramColumn", DEFAULTS.reorderPoc.paramColumn),
+            candidates: getText(metadataObjects, "reorderPoc", "candidates", DEFAULTS.reorderPoc.candidates)
         },
         configState: getText(metadataObjects, "general", "configState", ""),
         columnWidths: getText(metadataObjects, "general", "columnWidths", "")

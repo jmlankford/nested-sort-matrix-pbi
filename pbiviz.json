@@ -4,7 +4,7 @@
     "displayName": "Nested Sort Matrix",
     "guid": "nestedSortMatrix8F3A1C7B2D4E4F5A9B6C0D1E2F3A4B5C",
     "visualClassName": "Visual",
-    "version": "3.3.0.0-poc",
+    "version": "3.3.1.0-poc",
     "description": "Replaces the stock matrix with true nested/hierarchical sorting scoped within parent groups, plus a runtime configuration panel to hide and rename row levels, reorder/hide/rename value columns, and hide column pivot fields. Matrix DataView with engine-computed values at every hierarchy level, native expand/collapse, pivot, subtotals, conditional formatting, and row virtualization.",
     "supportUrl": "https://learn.microsoft.com/power-bi/developer/visuals/",
     "gitHubUrl": ""
